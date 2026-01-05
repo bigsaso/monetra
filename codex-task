@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+TASK=".codex/tasks/$1.md"
+
+if [ ! -f "$TASK" ]; then
+  echo "❌ Task not found: $TASK"
+  exit 1
+fi
+
+echo "▶ Codex executing task: $TASK"
+codex exec --skip-git-repo-check "$(cat "$TASK")"
