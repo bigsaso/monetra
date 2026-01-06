@@ -1,10 +1,3 @@
-import { Space_Grotesk } from "next/font/google";
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  display: "swap"
-});
-
 export const metadata = {
   title: "Monetra",
   description: "Monetra frontend"
@@ -13,7 +6,14 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body className={spaceGrotesk.className}>{children}</body>
+      <body
+        style={{
+          fontFamily:
+            "system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"
+        }}
+      >
+        {children}
+      </body>
     </html>
   );
 }

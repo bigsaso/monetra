@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import CategoryBreakdownChart from "./components/CategoryBreakdownChart";
+import MonthlyTrendsChart from "./components/MonthlyTrendsChart";
 import SignOutButton from "./components/SignOutButton";
+import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
+import { useMonthlyTrends } from "../lib/useMonthlyTrends";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -27,6 +31,16 @@ export default function DashboardClient({ userEmail }) {
   const [error, setError] = useState("");
   const [budgetLoading, setBudgetLoading] = useState(true);
   const [budgetError, setBudgetError] = useState("");
+  const {
+    data: monthlyTrends,
+    loading: trendsLoading,
+    error: trendsError
+  } = useMonthlyTrends();
+  const {
+    data: categoryBreakdown,
+    loading: breakdownLoading,
+    error: breakdownError
+  } = useCategoryBreakdown();
 
   const monthLabel = useMemo(
     () =>
@@ -288,6 +302,30 @@ export default function DashboardClient({ userEmail }) {
               })}
             </div>
           )}
+        </section>
+
+        <section className="card span">
+          <div className="card-header">
+            <h2>Expense categories</h2>
+            <p className="subtle">Share of spending by category this month.</p>
+          </div>
+          {breakdownLoading ? <p>Loading category breakdown...</p> : null}
+          {breakdownError ? <p className="error">{breakdownError}</p> : null}
+          {!breakdownLoading && !breakdownError ? (
+            <CategoryBreakdownChart data={categoryBreakdown} />
+          ) : null}
+        </section>
+
+        <section className="card span">
+          <div className="card-header">
+            <h2>Monthly trends</h2>
+            <p className="subtle">Income, expenses, and net cashflow.</p>
+          </div>
+          {trendsLoading ? <p>Loading monthly trends...</p> : null}
+          {trendsError ? <p className="error">{trendsError}</p> : null}
+          {!trendsLoading && !trendsError ? (
+            <MonthlyTrendsChart data={monthlyTrends} />
+          ) : null}
         </section>
 
         <section className="card span">

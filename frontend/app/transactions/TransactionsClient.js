@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import CategoryManagerModal from "../components/CategoryManagerModal";
 
 const buildEmptyForm = (dateValue) => ({
   account_id: "",
@@ -15,12 +16,16 @@ const buildEmptyForm = (dateValue) => ({
 export default function TransactionsClient() {
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [accounts, setAccounts] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [form, setForm] = useState(buildEmptyForm(today));
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [categoriesError, setCategoriesError] = useState("");
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
 
   const currencyFormatter = useMemo(
     () =>
@@ -58,8 +63,29 @@ export default function TransactionsClient() {
     }
   };
 
+  const loadCategories = async () => {
+    setCategoriesLoading(true);
+    setCategoriesError("");
+    try {
+      const response = await fetch("/api/categories");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load categories.");
+      }
+      const data = await response.json();
+      setCategories(data);
+      return data;
+    } catch (err) {
+      setCategoriesError(err.message);
+      return [];
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadData();
+    loadCategories();
   }, []);
 
   useEffect(() => {
@@ -86,7 +112,7 @@ export default function TransactionsClient() {
         account_id: Number(form.account_id),
         amount: Number(form.amount),
         type: form.type,
-        category: form.category.trim(),
+        category: form.category ? form.category.trim() : null,
         date: form.date,
         notes: form.notes || null
       };
@@ -102,7 +128,6 @@ export default function TransactionsClient() {
         const data = await response.json();
         throw new Error(data?.detail || "Failed to save transaction.");
       }
-      setForm(buildEmptyForm(today));
       setEditingId(null);
       await loadData();
     } catch (err) {
@@ -155,6 +180,53 @@ export default function TransactionsClient() {
       setError(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const createCategory = async (name) => {
+    const response = await fetch("/api/categories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.detail || "Failed to create category.");
+    }
+    await loadCategories();
+    setForm((prev) => ({ ...prev, category: data.name }));
+  };
+
+  const renameCategory = async (categoryId, nextName, previousName) => {
+    const response = await fetch(`/api/categories/${categoryId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: nextName })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.detail || "Failed to rename category.");
+    }
+    await loadCategories();
+    if (form.category === previousName) {
+      setForm((prev) => ({ ...prev, category: data.name }));
+    }
+  };
+
+  const deleteCategory = async (categoryId, categoryName) => {
+    const response = await fetch(`/api/categories/${categoryId}`, {
+      method: "DELETE"
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.detail || "Failed to delete category.");
+    }
+    const refreshed = await loadCategories();
+    if (form.category === categoryName) {
+      setForm((prev) => ({
+        ...prev,
+        category: refreshed[0]?.name || ""
+      }));
     }
   };
 
@@ -213,13 +285,44 @@ export default function TransactionsClient() {
           </label>
           <label>
             Category
-            <input
-              name="category"
-              value={form.category}
-              onChange={handleChange}
-              placeholder="Rent, Payroll, Groceries"
-            />
+            <div
+              style={{
+                display: "flex",
+                gap: "8px",
+                flexWrap: "wrap",
+                alignItems: "center"
+              }}
+            >
+              <select
+                name="category"
+                value={form.category}
+                onChange={handleChange}
+                disabled={categoriesLoading}
+              >
+                <option value="">Uncategorized</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.name}>
+                    {category.name}
+                  </option>
+                ))}
+                {form.category &&
+                !categories.some(
+                  (category) => category.name === form.category
+                ) ? (
+                  <option value={form.category}>{form.category}</option>
+                ) : null}
+              </select>
+              <button
+                type="button"
+                onClick={() => setShowCategoryModal(true)}
+              >
+                Add/manage categories
+              </button>
+            </div>
           </label>
+          {categoriesError ? (
+            <p style={{ color: "crimson" }}>{categoriesError}</p>
+          ) : null}
           <label>
             Date
             <input
@@ -301,6 +404,15 @@ export default function TransactionsClient() {
           </table>
         )}
       </section>
+      {showCategoryModal ? (
+        <CategoryManagerModal
+          categories={categories}
+          onClose={() => setShowCategoryModal(false)}
+          onCreate={createCategory}
+          onRename={renameCategory}
+          onDelete={deleteCategory}
+        />
+      ) : null}
     </div>
   );
 }

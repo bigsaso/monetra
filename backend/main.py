@@ -16,6 +16,8 @@ from sqlalchemy import (
     Numeric,
     String,
     Table,
+    UniqueConstraint,
+    case,
     create_engine,
     func,
     insert,
@@ -45,6 +47,16 @@ if database_url.startswith("sqlite"):
 engine = create_engine(database_url, connect_args=connect_args)
 metadata = MetaData()
 
+DEFAULT_CATEGORIES = [
+    "Groceries",
+    "Rent",
+    "Dining",
+    "Utilities",
+    "Travel",
+    "Subscriptions",
+    "Other",
+]
+
 users = Table(
     "users",
     metadata,
@@ -63,6 +75,16 @@ accounts = Table(
     Column("type", String(50), nullable=False),
     Column("institution", String(255)),
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
+)
+
+categories = Table(
+    "categories",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
+    Column("name", String(255), nullable=False),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+    UniqueConstraint("user_id", "name", name="uq_categories_user_name"),
 )
 
 transactions = Table(
@@ -179,6 +201,38 @@ class TransactionResponse(TransactionPayload):
     user_id: int
 
 
+class BudgetRulePayload(BaseModel):
+    rule_type: str
+    amount: Decimal
+    category: str | None = None
+    account_id: int | None = None
+
+    @classmethod
+    def validate_payload(cls, payload: "BudgetRulePayload") -> "BudgetRulePayload":
+        normalized_type = payload.rule_type.strip().lower()
+        allowed_types = {"category_cap", "account_cap", "savings_target"}
+        if normalized_type not in allowed_types:
+            raise ValueError("Invalid budget rule type.")
+        payload.rule_type = normalized_type
+        if payload.amount <= 0:
+            raise ValueError("Budget amount must be greater than zero.")
+
+        payload.category = payload.category.strip() if payload.category else None
+        if normalized_type == "category_cap":
+            if not payload.category:
+                raise ValueError("Category cap requires a category.")
+            payload.account_id = None
+        elif normalized_type == "account_cap":
+            if payload.account_id is None:
+                raise ValueError("Account cap requires an account.")
+            payload.category = None
+        else:
+            payload.category = None
+            payload.account_id = None
+
+        return payload
+
+
 class BudgetRuleResponse(BaseModel):
     id: int
     user_id: int
@@ -203,6 +257,37 @@ class BudgetEvaluationResponse(BaseModel):
     status: str
 
 
+class MonthlyTrendResponse(BaseModel):
+    month: str
+    total_income: Decimal
+    total_expenses: Decimal
+    net_cashflow: Decimal
+
+
+class CategoryBreakdownResponse(BaseModel):
+    category: str
+    total_spent: Decimal
+    percentage_of_total: Decimal
+
+
+class CategoryPayload(BaseModel):
+    name: str
+
+    @classmethod
+    def validate_payload(cls, payload: "CategoryPayload") -> "CategoryPayload":
+        payload.name = payload.name.strip()
+        if not payload.name:
+            raise ValueError("Category name required.")
+        return payload
+
+
+class CategoryResponse(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    created_at: datetime | None = None
+
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
@@ -225,11 +310,60 @@ def get_user_id(x_user_id: str | None = Header(None)) -> int:
     return user_id
 
 
+def ensure_default_categories(conn, user_id: int) -> None:
+    existing = conn.execute(
+        select(categories.c.id).where(categories.c.user_id == user_id).limit(1)
+    ).first()
+    if existing:
+        return
+    conn.execute(
+        insert(categories),
+        [{"user_id": user_id, "name": name} for name in DEFAULT_CATEGORIES],
+    )
+
+
+def category_in_use(conn, user_id: int, name: str) -> bool:
+    txn_match = conn.execute(
+        select(transactions.c.id)
+        .where(transactions.c.user_id == user_id, transactions.c.category == name)
+        .limit(1)
+    ).first()
+    if txn_match:
+        return True
+    rule_match = conn.execute(
+        select(budget_rules.c.id)
+        .where(budget_rules.c.user_id == user_id, budget_rules.c.category == name)
+        .limit(1)
+    ).first()
+    return bool(rule_match)
+
+
 def get_period_range(period: str, today: date) -> tuple[date, date]:
     normalized = period.strip().lower()
     if normalized == "monthly":
         return today.replace(day=1), today
     raise ValueError("Unsupported period. Use 'monthly'.")
+
+
+def month_start(value: date) -> date:
+    return value.replace(day=1)
+
+
+def shift_month(value: date, months: int) -> date:
+    month_index = (value.year * 12 + value.month - 1) + months
+    year = month_index // 12
+    month = month_index % 12 + 1
+    return date(year, month, 1)
+
+
+def iter_months(start_value: date, end_value: date) -> list[date]:
+    months: list[date] = []
+    cursor = month_start(start_value)
+    end_month = month_start(end_value)
+    while cursor <= end_month:
+        months.append(cursor)
+        cursor = shift_month(cursor, 1)
+    return months
 
 
 @app.get("/health")
@@ -253,6 +387,8 @@ def signup(payload: CredentialsPayload) -> UserResponse:
         with engine.begin() as conn:
             result = conn.execute(stmt)
             row = result.mappings().first()
+            if row:
+                ensure_default_categories(conn, row["id"])
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="Email already exists.") from exc
 
@@ -272,6 +408,130 @@ def login(payload: CredentialsPayload) -> UserResponse:
         raise HTTPException(status_code=401, detail="Invalid credentials.")
 
     return UserResponse(id=row["id"], email=row["email"], created_at=row["created_at"])
+
+
+@app.get("/categories", response_model=list[CategoryResponse])
+def list_categories(
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[CategoryResponse]:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        ensure_default_categories(conn, user_id)
+        result = conn.execute(
+            select(categories)
+            .where(categories.c.user_id == user_id)
+            .order_by(categories.c.name.asc(), categories.c.id.asc())
+        )
+        rows = result.mappings().all()
+    return [
+        CategoryResponse(
+            id=row["id"],
+            user_id=row["user_id"],
+            name=row["name"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+@app.post("/categories", response_model=CategoryResponse)
+def create_category(
+    payload: CategoryPayload, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> CategoryResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = CategoryPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    stmt = (
+        insert(categories)
+        .values(user_id=user_id, name=payload.name)
+        .returning(
+            categories.c.id,
+            categories.c.user_id,
+            categories.c.name,
+            categories.c.created_at,
+        )
+    )
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(stmt)
+            row = result.mappings().first()
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Category already exists.") from exc
+
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create category.")
+    return CategoryResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        name=row["name"],
+        created_at=row["created_at"],
+    )
+
+
+@app.put("/categories/{category_id}", response_model=CategoryResponse)
+def update_category(
+    category_id: int,
+    payload: CategoryPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> CategoryResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = CategoryPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    stmt = (
+        update(categories)
+        .where(categories.c.id == category_id, categories.c.user_id == user_id)
+        .values(name=payload.name)
+        .returning(
+            categories.c.id,
+            categories.c.user_id,
+            categories.c.name,
+            categories.c.created_at,
+        )
+    )
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(stmt)
+            row = result.mappings().first()
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Category already exists.") from exc
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Category not found.")
+    return CategoryResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        name=row["name"],
+        created_at=row["created_at"],
+    )
+
+
+@app.delete("/categories/{category_id}")
+def delete_category(
+    category_id: int, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> dict:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        result = conn.execute(
+            select(categories.c.id, categories.c.name).where(
+                categories.c.id == category_id, categories.c.user_id == user_id
+            )
+        )
+        row = result.mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Category not found.")
+        if category_in_use(conn, user_id, row["name"]):
+            raise HTTPException(status_code=409, detail="Category is in use.")
+        delete_stmt = categories.delete().where(
+            categories.c.id == category_id, categories.c.user_id == user_id
+        )
+        conn.execute(delete_stmt)
+    return {"status": "deleted"}
 
 
 @app.get("/accounts", response_model=list[AccountResponse])
@@ -542,6 +802,135 @@ def delete_transaction(
     return {"status": "deleted"}
 
 
+@app.get("/reports/monthly-trends", response_model=list[MonthlyTrendResponse])
+def monthly_trends(
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[MonthlyTrendResponse]:
+    user_id = get_user_id(x_user_id)
+    today = date.today()
+    if end_date is None:
+        end_date = today
+    if start_date is None:
+        start_date = shift_month(month_start(today), -11)
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="Start date must be on or before end date.")
+
+    month_expr = func.to_char(transactions.c.date, "YYYY-MM").label("month")
+    income_sum = func.coalesce(
+        func.sum(case((transactions.c.type == "income", transactions.c.amount), else_=0)),
+        0,
+    ).label("total_income")
+    expense_sum = func.coalesce(
+        func.sum(case((transactions.c.type == "expense", transactions.c.amount), else_=0)),
+        0,
+    ).label("total_expenses")
+
+    stmt = (
+        select(month_expr, income_sum, expense_sum)
+        .where(
+            transactions.c.user_id == user_id,
+            transactions.c.date >= start_date,
+            transactions.c.date <= end_date,
+        )
+        .group_by(month_expr)
+        .order_by(month_expr)
+    )
+
+    with engine.begin() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    totals_by_month = {
+        row["month"]: {
+            "income": row["total_income"],
+            "expenses": row["total_expenses"],
+        }
+        for row in rows
+    }
+
+    results: list[MonthlyTrendResponse] = []
+    for month_value in iter_months(start_date, end_date):
+        key = month_value.strftime("%Y-%m")
+        totals = totals_by_month.get(key, {"income": Decimal("0"), "expenses": Decimal("0")})
+        income = totals["income"]
+        expenses = totals["expenses"]
+        results.append(
+            MonthlyTrendResponse(
+                month=key,
+                total_income=income,
+                total_expenses=expenses,
+                net_cashflow=income - expenses,
+            )
+        )
+    return results
+
+
+@app.get("/reports/category-breakdown", response_model=list[CategoryBreakdownResponse])
+def category_breakdown(
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[CategoryBreakdownResponse]:
+    user_id = get_user_id(x_user_id)
+    today = date.today()
+    if end_date is None:
+        end_date = today
+    if start_date is None:
+        start_date = month_start(today)
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="Start date must be on or before end date.")
+
+    category_expr = func.coalesce(transactions.c.category, "Uncategorized").label("category")
+    total_spent_expr = func.coalesce(func.sum(transactions.c.amount), 0).label("total_spent")
+
+    total_stmt = select(func.coalesce(func.sum(transactions.c.amount), 0)).where(
+        transactions.c.user_id == user_id,
+        transactions.c.type == "expense",
+        transactions.c.date >= start_date,
+        transactions.c.date <= end_date,
+    )
+    stmt = (
+        select(category_expr, total_spent_expr)
+        .where(
+            transactions.c.user_id == user_id,
+            transactions.c.type == "expense",
+            transactions.c.date >= start_date,
+            transactions.c.date <= end_date,
+        )
+        .group_by(category_expr)
+        .order_by(total_spent_expr.desc())
+    )
+
+    with engine.begin() as conn:
+        total_spent_value = conn.execute(total_stmt).scalar_one()
+        rows = conn.execute(stmt).mappings().all()
+
+    total_spent_decimal = (
+        total_spent_value
+        if isinstance(total_spent_value, Decimal)
+        else Decimal(str(total_spent_value))
+    )
+    if total_spent_decimal <= 0:
+        return []
+
+    results: list[CategoryBreakdownResponse] = []
+    for row in rows:
+        category_total = row["total_spent"]
+        category_total_decimal = (
+            category_total if isinstance(category_total, Decimal) else Decimal(str(category_total))
+        )
+        percentage = (category_total_decimal / total_spent_decimal) * Decimal("100")
+        results.append(
+            CategoryBreakdownResponse(
+                category=row["category"],
+                total_spent=category_total_decimal,
+                percentage_of_total=percentage,
+            )
+        )
+    return results
+
+
 @app.get("/budget/rules", response_model=list[BudgetRuleResponse])
 def list_budget_rules(
     x_user_id: str | None = Header(None, alias="x-user-id"),
@@ -566,6 +955,133 @@ def list_budget_rules(
         )
         for row in rows
     ]
+
+
+@app.post("/budget/rules", response_model=BudgetRuleResponse)
+def create_budget_rule(
+    payload: BudgetRulePayload, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> BudgetRuleResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = BudgetRulePayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        if payload.account_id is not None:
+            account_exists = conn.execute(
+                select(accounts.c.id).where(
+                    accounts.c.id == payload.account_id, accounts.c.user_id == user_id
+                )
+            ).first()
+            if not account_exists:
+                raise HTTPException(status_code=404, detail="Account not found.")
+
+        stmt = (
+            insert(budget_rules)
+            .values(
+                user_id=user_id,
+                rule_type=payload.rule_type,
+                amount=payload.amount,
+                category=payload.category,
+                account_id=payload.account_id,
+            )
+            .returning(
+                budget_rules.c.id,
+                budget_rules.c.user_id,
+                budget_rules.c.rule_type,
+                budget_rules.c.amount,
+                budget_rules.c.category,
+                budget_rules.c.account_id,
+                budget_rules.c.created_at,
+            )
+        )
+        result = conn.execute(stmt)
+        row = result.mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create budget rule.")
+    return BudgetRuleResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        rule_type=row["rule_type"],
+        amount=row["amount"],
+        category=row["category"],
+        account_id=row["account_id"],
+        created_at=row["created_at"],
+    )
+
+
+@app.put("/budget/rules/{rule_id}", response_model=BudgetRuleResponse)
+def update_budget_rule(
+    rule_id: int,
+    payload: BudgetRulePayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> BudgetRuleResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = BudgetRulePayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        if payload.account_id is not None:
+            account_exists = conn.execute(
+                select(accounts.c.id).where(
+                    accounts.c.id == payload.account_id, accounts.c.user_id == user_id
+                )
+            ).first()
+            if not account_exists:
+                raise HTTPException(status_code=404, detail="Account not found.")
+
+        stmt = (
+            update(budget_rules)
+            .where(budget_rules.c.id == rule_id, budget_rules.c.user_id == user_id)
+            .values(
+                rule_type=payload.rule_type,
+                amount=payload.amount,
+                category=payload.category,
+                account_id=payload.account_id,
+            )
+            .returning(
+                budget_rules.c.id,
+                budget_rules.c.user_id,
+                budget_rules.c.rule_type,
+                budget_rules.c.amount,
+                budget_rules.c.category,
+                budget_rules.c.account_id,
+                budget_rules.c.created_at,
+            )
+        )
+        result = conn.execute(stmt)
+        row = result.mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Budget rule not found.")
+    return BudgetRuleResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        rule_type=row["rule_type"],
+        amount=row["amount"],
+        category=row["category"],
+        account_id=row["account_id"],
+        created_at=row["created_at"],
+    )
+
+
+@app.delete("/budget/rules/{rule_id}")
+def delete_budget_rule(
+    rule_id: int, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> dict:
+    user_id = get_user_id(x_user_id)
+    stmt = budget_rules.delete().where(
+        budget_rules.c.id == rule_id, budget_rules.c.user_id == user_id
+    )
+    with engine.begin() as conn:
+        result = conn.execute(stmt)
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Budget rule not found.")
+    return {"status": "deleted"}
 
 
 @app.get("/budget/evaluate", response_model=list[BudgetEvaluationResponse])

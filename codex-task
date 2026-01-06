@@ -8,4 +8,4 @@ if [ ! -f "$TASK" ]; then
 fi
 
 echo "▶ Codex executing task: $TASK"
-codex exec --skip-git-repo-check "$(cat "$TASK")"
+codex exec "$(cat "$TASK")"
