@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import bcrypt
-from fastapi import FastAPI, HTTPException, Header, Query
+from fastapi import FastAPI, HTTPException, Header, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import (
@@ -27,6 +27,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 
 from backend.budget_engine import BudgetRule, Transaction, evaluate_budget
+from backend.csv_parser import CSVParseResult, ParsedTransaction, parse_transactions_csv
 
 app = FastAPI()
 
@@ -286,6 +287,12 @@ class CategoryResponse(BaseModel):
     user_id: int
     name: str
     created_at: datetime | None = None
+
+
+class TransactionImportPreviewResponse(BaseModel):
+    transactions: list[ParsedTransaction]
+    total_count: int
+    total_amount: Decimal
 
 
 def hash_password(password: str) -> str:
@@ -673,6 +680,51 @@ def list_transactions(
         )
         for row in rows
     ]
+
+
+@app.post("/transactions/parse-csv", response_model=CSVParseResult)
+async def parse_transactions(file: UploadFile = File(...)) -> CSVParseResult:
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="CSV file required.")
+
+    contents = await file.read()
+    try:
+        decoded = contents.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded.") from exc
+
+    try:
+        return parse_transactions_csv(decoded)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/transactions/import/preview", response_model=TransactionImportPreviewResponse)
+async def preview_transaction_import(
+    file: UploadFile = File(...),
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> TransactionImportPreviewResponse:
+    get_user_id(x_user_id)
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="CSV file required.")
+
+    contents = await file.read()
+    try:
+        decoded = contents.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded.") from exc
+
+    try:
+        parse_result = parse_transactions_csv(decoded)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    total_amount = sum((row.amount for row in parse_result.rows), Decimal("0"))
+    return TransactionImportPreviewResponse(
+        transactions=parse_result.rows,
+        total_count=len(parse_result.rows),
+        total_amount=total_amount,
+    )
 
 
 @app.post("/transactions", response_model=TransactionResponse)

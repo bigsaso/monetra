@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import CategoryManagerModal from "../components/CategoryManagerModal";
+import CsvImportPreviewModal from "../components/CsvImportPreviewModal";
 
 const buildEmptyForm = (dateValue) => ({
   account_id: "",
@@ -12,6 +13,99 @@ const buildEmptyForm = (dateValue) => ({
   date: dateValue,
   notes: ""
 });
+
+const parseCsvText = (text) => {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+
+    if (char === '"') {
+      if (inQuotes && text[i + 1] === '"') {
+        field += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      row.push(field);
+      field = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && text[i + 1] === "\n") {
+        i += 1;
+      }
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      continue;
+    }
+
+    field += char;
+  }
+
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+
+  return rows.filter((columns) =>
+    columns.some((column) => column && column.trim())
+  );
+};
+
+const buildPreviewRows = (text) => {
+  const rows = parseCsvText(text);
+  if (rows.length < 2) {
+    throw new Error("CSV must include a header row and at least one entry.");
+  }
+
+  const headers = rows[0].map((header) => header.trim());
+  const normalized = headers.map((header) => header.toLowerCase());
+
+  const findHeaderIndex = (matcher) =>
+    normalized.findIndex((header) => matcher(header));
+
+  const dateIndex = findHeaderIndex(
+    (header) => header === "date" || header.includes("date")
+  );
+  const descriptionIndex = findHeaderIndex(
+    (header) =>
+      header === "description" ||
+      header.includes("description") ||
+      header.includes("merchant") ||
+      header.includes("memo")
+  );
+  const amountIndex = findHeaderIndex(
+    (header) => header === "amount" || header.includes("amount")
+  );
+  const categoryIndex = findHeaderIndex(
+    (header) => header === "category" || header.includes("category")
+  );
+
+  if (dateIndex < 0 || descriptionIndex < 0 || amountIndex < 0) {
+    throw new Error(
+      "CSV needs columns for date, description, and amount."
+    );
+  }
+
+  return rows.slice(1).map((row, index) => ({
+    id: `csv-${index}`,
+    date: row[dateIndex]?.trim() || "",
+    description: row[descriptionIndex]?.trim() || "",
+    amount: row[amountIndex]?.trim() || "",
+    category: categoryIndex >= 0 ? row[categoryIndex]?.trim() || "" : ""
+  }));
+};
 
 export default function TransactionsClient() {
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -26,6 +120,10 @@ export default function TransactionsClient() {
   const [error, setError] = useState("");
   const [categoriesError, setCategoriesError] = useState("");
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [importRows, setImportRows] = useState([]);
+  const [importError, setImportError] = useState("");
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [bulkCategory, setBulkCategory] = useState("");
 
   const currencyFormatter = useMemo(
     () =>
@@ -230,6 +328,44 @@ export default function TransactionsClient() {
     }
   };
 
+  const handleCsvUpload = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    setImportError("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = String(reader.result || "");
+        const previewRows = buildPreviewRows(text);
+        if (previewRows.length === 0) {
+          throw new Error("No rows found in the CSV.");
+        }
+        setImportRows(previewRows);
+        setBulkCategory("");
+        setShowImportModal(true);
+      } catch (err) {
+        setImportError(err.message);
+        setImportRows([]);
+        setShowImportModal(false);
+      }
+    };
+    reader.onerror = () => {
+      setImportError("Failed to read CSV file.");
+      setImportRows([]);
+      setShowImportModal(false);
+    };
+    reader.readAsText(file);
+    event.target.value = "";
+  };
+
+  const handleCloseImportModal = () => {
+    setShowImportModal(false);
+    setImportRows([]);
+    setBulkCategory("");
+  };
+
   return (
     <div style={{ maxWidth: "860px", margin: "40px auto", padding: "0 16px" }}>
       <Link href="/" style={{ display: "inline-block", marginBottom: "16px" }}>
@@ -353,6 +489,13 @@ export default function TransactionsClient() {
         </form>
       </section>
 
+      <section style={{ marginBottom: "32px" }}>
+        <h2>Import expenses</h2>
+        <p>Upload a CSV to preview expenses before saving.</p>
+        <input type="file" accept=".csv,text/csv" onChange={handleCsvUpload} />
+        {importError ? <p style={{ color: "crimson" }}>{importError}</p> : null}
+      </section>
+
       <section>
         <h2>Recent transactions</h2>
         {loading ? <p>Loading transactions...</p> : null}
@@ -404,6 +547,17 @@ export default function TransactionsClient() {
           </table>
         )}
       </section>
+      {showImportModal ? (
+        <CsvImportPreviewModal
+          rows={importRows}
+          categories={categories}
+          bulkCategory={bulkCategory}
+          onBulkCategoryChange={setBulkCategory}
+          onRowsChange={setImportRows}
+          onManageCategories={() => setShowCategoryModal(true)}
+          onClose={handleCloseImportModal}
+        />
+      ) : null}
       {showCategoryModal ? (
         <CategoryManagerModal
           categories={categories}
