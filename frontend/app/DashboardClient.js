@@ -208,6 +208,9 @@ export default function DashboardClient({ userEmail }) {
           <Link href="/accounts" className="ghost">
             Manage accounts
           </Link>
+          <Link href="/pay-schedules" className="ghost">
+            Pay schedules
+          </Link>
           <Link href="/transactions" className="ghost">
             View transactions
           </Link>

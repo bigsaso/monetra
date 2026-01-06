@@ -28,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.budget_engine import BudgetRule, Transaction, evaluate_budget
 from backend.csv_parser import CSVParseResult, ParsedTransaction, parse_transactions_csv
+from backend.income_projection import IncomeTransaction, PaySchedule, project_income
 
 app = FastAPI()
 
@@ -110,6 +111,18 @@ budget_rules = Table(
     Column("amount", Numeric(12, 2), nullable=False),
     Column("category", String(255)),
     Column("account_id", Integer, ForeignKey("accounts.id")),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+)
+
+pay_schedules = Table(
+    "pay_schedules",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
+    Column("amount", Numeric(12, 2), nullable=False),
+    Column("frequency", String(50), nullable=False),
+    Column("start_date", Date, nullable=False),
+    Column("account_id", Integer, ForeignKey("accounts.id"), nullable=False),
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
 )
 
@@ -269,6 +282,47 @@ class CategoryBreakdownResponse(BaseModel):
     category: str
     total_spent: Decimal
     percentage_of_total: Decimal
+
+
+class IncomeProjectionEntry(BaseModel):
+    date: date
+    amount: Decimal
+    account_id: int
+    source: str
+
+
+def _normalize_frequency(value: str) -> str:
+    normalized = "".join(ch for ch in value.strip().lower() if ch.isalnum())
+    if normalized == "byweekly":
+        return "biweekly"
+    return normalized
+
+
+class PaySchedulePayload(BaseModel):
+    amount: Decimal
+    start_date: date
+    account_id: int
+    frequency: str | None = "biweekly"
+
+    @classmethod
+    def validate_payload(cls, payload: "PaySchedulePayload") -> "PaySchedulePayload":
+        if payload.amount <= 0:
+            raise ValueError("Pay schedule amount must be greater than zero.")
+        normalized = _normalize_frequency(payload.frequency or "biweekly")
+        if normalized not in {"weekly", "biweekly", "monthly"}:
+            raise ValueError("Only weekly, biweekly, or monthly schedules are supported.")
+        payload.frequency = normalized
+        return payload
+
+
+class PayScheduleResponse(BaseModel):
+    id: int
+    user_id: int
+    amount: Decimal
+    start_date: date
+    account_id: int
+    frequency: str
+    created_at: datetime | None = None
 
 
 class CategoryPayload(BaseModel):
@@ -673,6 +727,149 @@ def delete_account(account_id: int, x_user_id: str | None = Header(None, alias="
     return {"status": "deleted"}
 
 
+@app.get("/pay-schedules", response_model=list[PayScheduleResponse])
+def list_pay_schedules(
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[PayScheduleResponse]:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        result = conn.execute(
+            select(pay_schedules)
+            .where(pay_schedules.c.user_id == user_id)
+            .order_by(pay_schedules.c.created_at.desc())
+        )
+        rows = result.mappings().all()
+    return [
+        PayScheduleResponse(
+            id=row["id"],
+            user_id=row["user_id"],
+            amount=row["amount"],
+            start_date=row["start_date"],
+            account_id=row["account_id"],
+            frequency=row["frequency"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+@app.post("/pay-schedules", response_model=PayScheduleResponse)
+def create_pay_schedule(
+    payload: PaySchedulePayload, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> PayScheduleResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = PaySchedulePayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        account_exists = conn.execute(
+            select(accounts.c.id).where(accounts.c.id == payload.account_id, accounts.c.user_id == user_id)
+        ).first()
+        if not account_exists:
+            raise HTTPException(status_code=404, detail="Account not found.")
+        stmt = (
+            insert(pay_schedules)
+            .values(
+                user_id=user_id,
+                amount=payload.amount,
+                start_date=payload.start_date,
+                account_id=payload.account_id,
+                frequency=payload.frequency,
+            )
+            .returning(
+                pay_schedules.c.id,
+                pay_schedules.c.user_id,
+                pay_schedules.c.amount,
+                pay_schedules.c.start_date,
+                pay_schedules.c.account_id,
+                pay_schedules.c.frequency,
+                pay_schedules.c.created_at,
+            )
+        )
+        row = conn.execute(stmt).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create pay schedule.")
+    return PayScheduleResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        amount=row["amount"],
+        start_date=row["start_date"],
+        account_id=row["account_id"],
+        frequency=row["frequency"],
+        created_at=row["created_at"],
+    )
+
+
+@app.put("/pay-schedules/{schedule_id}", response_model=PayScheduleResponse)
+def update_pay_schedule(
+    schedule_id: int,
+    payload: PaySchedulePayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> PayScheduleResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = PaySchedulePayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        account_exists = conn.execute(
+            select(accounts.c.id).where(accounts.c.id == payload.account_id, accounts.c.user_id == user_id)
+        ).first()
+        if not account_exists:
+            raise HTTPException(status_code=404, detail="Account not found.")
+        stmt = (
+            update(pay_schedules)
+            .where(pay_schedules.c.id == schedule_id, pay_schedules.c.user_id == user_id)
+            .values(
+                amount=payload.amount,
+                start_date=payload.start_date,
+                account_id=payload.account_id,
+                frequency=payload.frequency,
+            )
+            .returning(
+                pay_schedules.c.id,
+                pay_schedules.c.user_id,
+                pay_schedules.c.amount,
+                pay_schedules.c.start_date,
+                pay_schedules.c.account_id,
+                pay_schedules.c.frequency,
+                pay_schedules.c.created_at,
+            )
+        )
+        row = conn.execute(stmt).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Pay schedule not found.")
+    return PayScheduleResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        amount=row["amount"],
+        start_date=row["start_date"],
+        account_id=row["account_id"],
+        frequency=row["frequency"],
+        created_at=row["created_at"],
+    )
+
+
+@app.delete("/pay-schedules/{schedule_id}")
+def delete_pay_schedule(
+    schedule_id: int, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> dict:
+    user_id = get_user_id(x_user_id)
+    stmt = pay_schedules.delete().where(
+        pay_schedules.c.id == schedule_id, pay_schedules.c.user_id == user_id
+    )
+    with engine.begin() as conn:
+        result = conn.execute(stmt)
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Pay schedule not found.")
+    return {"status": "deleted"}
+
+
 @app.get("/transactions", response_model=list[TransactionResponse])
 def list_transactions(
     x_user_id: str | None = Header(None, alias="x-user-id"),
@@ -938,6 +1135,86 @@ def delete_transaction(
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Transaction not found.")
     return {"status": "deleted"}
+
+
+@app.get("/income/projections", response_model=list[IncomeProjectionEntry])
+def income_projections(
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[IncomeProjectionEntry]:
+    user_id = get_user_id(x_user_id)
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="Start date must be on or before end date.")
+
+    with engine.begin() as conn:
+        income_rows = conn.execute(
+            select(
+                transactions.c.date,
+                transactions.c.amount,
+                transactions.c.account_id,
+            ).where(
+                transactions.c.user_id == user_id,
+                transactions.c.type == "income",
+                transactions.c.date >= start_date,
+                transactions.c.date <= end_date,
+            )
+        ).mappings().all()
+        schedule_rows = conn.execute(
+            select(
+                pay_schedules.c.amount,
+                pay_schedules.c.start_date,
+                pay_schedules.c.account_id,
+                pay_schedules.c.frequency,
+            ).where(pay_schedules.c.user_id == user_id)
+        ).mappings().all()
+
+    actual_entries = [
+        IncomeProjectionEntry(
+            date=row["date"],
+            amount=row["amount"],
+            account_id=row["account_id"],
+            source="actual",
+        )
+        for row in income_rows
+    ]
+
+    income_by_account: dict[int, list[IncomeTransaction]] = {}
+    for row in income_rows:
+        income_by_account.setdefault(row["account_id"], []).append(
+            IncomeTransaction(
+                date=row["date"],
+                amount=row["amount"],
+                account_id=row["account_id"],
+            )
+        )
+
+    projected_entries: list[IncomeProjectionEntry] = []
+    for row in schedule_rows:
+        schedule = PaySchedule(
+            amount=row["amount"],
+            start_date=row["start_date"],
+            account_id=row["account_id"],
+            frequency=row["frequency"],
+        )
+        existing_income = income_by_account.get(row["account_id"], [])
+        try:
+            projections = project_income(schedule, start_date, end_date, existing_income)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        projected_entries.extend(
+            IncomeProjectionEntry(
+                date=projection.date,
+                amount=projection.amount,
+                account_id=projection.account_id,
+                source="projected",
+            )
+            for projection in projections
+        )
+
+    entries = actual_entries + projected_entries
+    entries.sort(key=lambda entry: (entry.date, 0 if entry.source == "actual" else 1))
+    return entries
 
 
 @app.get("/reports/monthly-trends", response_model=list[MonthlyTrendResponse])
