@@ -1,14 +1,17 @@
 FROM node:20-alpine
 
-WORKDIR /app
+WORKDIR /app/frontend
 
 RUN apk add --no-cache ca-certificates
 
-COPY package.json ./
+ENV NEXT_DISABLE_FONT_DOWNLOAD=1
+
+COPY frontend/package.json ./
 RUN npm install
 
-COPY . .
-
+COPY frontend ./
+COPY widgets /app/widgets
+COPY layout /app/layout
 RUN npm run build
 
 EXPOSE 3000

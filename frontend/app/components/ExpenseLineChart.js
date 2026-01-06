@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -82,43 +82,100 @@ const addInterval = (date, resolution) => {
   return next;
 };
 
-const matchesCardLabel = (account, label) => {
-  if (!label) return false;
-  const normalized = label.toLowerCase();
-  const accountText = `${account.name || ""} ${
-    account.institution || ""
-  }`.toLowerCase();
-  return accountText.includes(normalized);
+const normalizeId = (value) => {
+  if (value === null || value === undefined) return "";
+  return String(value);
 };
 
 export default function ExpenseLineChart({
-  title,
-  subtitle,
-  cardLabel,
-  accounts = [],
-  transactions = [],
-  loading = false,
-  error = ""
+  account_id = "",
+  account_name = ""
 }) {
+  const [accounts, setAccounts] = useState([]);
+  const [accountTransactions, setAccountTransactions] = useState([]);
+  const [listLoading, setListLoading] = useState(true);
+  const [chartLoading, setChartLoading] = useState(true);
+  const [error, setError] = useState("");
   const [resolution, setResolution] = useState("daily");
-
-  const matchingAccounts = useMemo(
-    () => accounts.filter((account) => matchesCardLabel(account, cardLabel)),
-    [accounts, cardLabel]
+  const [selectedAccountId, setSelectedAccountId] = useState(
+    normalizeId(account_id)
   );
 
-  const accountIds = useMemo(
-    () => new Set(matchingAccounts.map((account) => account.id)),
-    [matchingAccounts]
+  useEffect(() => {
+    let isMounted = true;
+    const loadData = async () => {
+      setListLoading(true);
+      setError("");
+      try {
+        const accountsResponse = await fetch("/api/accounts");
+        if (!accountsResponse.ok) {
+          const data = await accountsResponse.json();
+          throw new Error(data?.detail || "Failed to load accounts.");
+        }
+        const accountsData = await accountsResponse.json();
+        if (!isMounted) return;
+        setAccounts(accountsData);
+      } catch (err) {
+        if (!isMounted) return;
+        setError(err.message);
+      } finally {
+        if (isMounted) setListLoading(false);
+      }
+    };
+    loadData();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!accounts.length) {
+      setSelectedAccountId("");
+      return;
+    }
+    setSelectedAccountId((current) => {
+      const normalizedAccounts = accounts.map((account) =>
+        normalizeId(account.id)
+      );
+      if (current && normalizedAccounts.includes(current)) {
+        return current;
+      }
+      const normalizedPropId = normalizeId(account_id);
+      if (normalizedPropId && normalizedAccounts.includes(normalizedPropId)) {
+        return normalizedPropId;
+      }
+      return normalizeId(accounts[0].id);
+    });
+  }, [account_id, accounts]);
+
+  const selectedAccount = useMemo(
+    () =>
+      accounts.find(
+        (account) => normalizeId(account.id) === selectedAccountId
+      ) || null,
+    [accounts, selectedAccountId]
   );
+
+  const selectedAccountName = selectedAccount?.name || account_name;
+  const title = selectedAccountName
+    ? `${selectedAccountName} expenses`
+    : "Expenses";
+  const subtitle = selectedAccountName
+    ? `Spend trend for ${selectedAccountName}-linked transactions.`
+    : "Select an account to view expense trends.";
+
+  const accountIds = useMemo(() => {
+    return new Set(selectedAccountId ? [selectedAccountId] : []);
+  }, [selectedAccountId]);
 
   const { series, maxValue } = useMemo(() => {
     if (!accountIds.size) {
       return { series: [], maxValue: 0 };
     }
-    const expenseTransactions = transactions.filter(
+    const expenseTransactions = accountTransactions.filter(
       (transaction) =>
-        transaction.type === "expense" && accountIds.has(transaction.account_id)
+        transaction.type === "expense" &&
+        accountIds.has(normalizeId(transaction.account_id))
     );
     if (!expenseTransactions.length) {
       return { series: [], maxValue: 0 };
@@ -161,11 +218,47 @@ export default function ExpenseLineChart({
 
     const max = Math.max(...seriesData.map((item) => item.total), 0);
     return { series: seriesData, maxValue: max };
-  }, [accountIds, resolution, transactions]);
+  }, [accountIds, resolution, accountTransactions]);
 
-  const width = 720;
-  const height = 260;
-  const padding = { top: 20, right: 20, bottom: 56, left: 64 };
+  useEffect(() => {
+    let isMounted = true;
+    if (!selectedAccountId) {
+      setAccountTransactions([]);
+      setChartLoading(false);
+      return () => {
+        isMounted = false;
+      };
+    }
+    const loadAccountTransactions = async () => {
+      setChartLoading(true);
+      setError("");
+      try {
+        const response = await fetch(
+          `/api/transactions?account_id=${selectedAccountId}`
+        );
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data?.detail || "Failed to load transactions.");
+        }
+        const data = await response.json();
+        if (!isMounted) return;
+        setAccountTransactions(data);
+      } catch (err) {
+        if (!isMounted) return;
+        setError(err.message);
+      } finally {
+        if (isMounted) setChartLoading(false);
+      }
+    };
+    loadAccountTransactions();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedAccountId]);
+
+  const width = 960;
+  const height = 360;
+  const padding = { top: 20, right: 24, bottom: 44, left: 64 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
 
@@ -192,41 +285,70 @@ export default function ExpenseLineChart({
     .map((item, index) => `${scaleX(index)},${scaleY(item.total)}`)
     .join(" ");
 
-  const emptyMessage = !matchingAccounts.length
-    ? `No ${cardLabel} account found.`
+  const emptyMessage = !accounts.length
+    ? "No accounts yet."
     : "No expense activity yet.";
 
   return (
     <section className="card">
-      <div className="card-header chart-header">
-        <div>
-          <h2>{title}</h2>
-          <p className="subtle">{subtitle}</p>
+      <div className="chart-layout">
+        <div className="chart-meta">
+          <div className="card-header chart-header">
+            <div>
+              <h2>{title}</h2>
+              <p className="subtle">{subtitle}</p>
+            </div>
+          </div>
+          <div className="selectors">
+            <label className="selector">
+              <span className="selector-label">Account</span>
+              <select
+                value={selectedAccountId}
+                onChange={(event) => setSelectedAccountId(event.target.value)}
+                disabled={!accounts.length}
+              >
+                {accounts.length === 0 ? (
+                  <option value="">No accounts</option>
+                ) : (
+                  accounts.map((account) => (
+                    <option
+                      key={account.id}
+                      value={normalizeId(account.id)}
+                    >
+                      {account.name || "Unnamed account"}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+            <label className="selector">
+              <span className="selector-label">Resolution</span>
+              <select
+                value={resolution}
+                onChange={(event) => setResolution(event.target.value)}
+              >
+                {RESOLUTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
-        <label className="selector">
-          <span className="selector-label">Resolution</span>
-          <select
-            value={resolution}
-            onChange={(event) => setResolution(event.target.value)}
-          >
-            {RESOLUTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
 
-      {loading ? <p>Loading transactions...</p> : null}
-      {error ? <p className="error">{error}</p> : null}
-      {!loading && !error && series.length === 0 ? (
-        <p className="chart-empty">{emptyMessage}</p>
-      ) : null}
+        <div className="chart-area">
+          {listLoading || chartLoading ? (
+            <p>Loading transactions...</p>
+          ) : null}
+          {error ? <p className="error">{error}</p> : null}
+          {!listLoading && !chartLoading && !error && series.length === 0 ? (
+            <p className="chart-empty">{emptyMessage}</p>
+          ) : null}
 
-      {!loading && !error && series.length > 0 ? (
-        <div className="chart">
-          <svg viewBox={`0 0 ${width} ${height}`} role="img">
+          {!listLoading && !chartLoading && !error && series.length > 0 ? (
+            <div className="chart">
+              <svg viewBox={`0 0 ${width} ${height}`} role="img">
             <g>
               {tickValues.map((value) => {
                 const y = scaleY(value);
@@ -268,7 +390,7 @@ export default function ExpenseLineChart({
                 <text
                   key={`label-${item.label}`}
                   x={scaleX(index)}
-                  y={height - padding.bottom + 24}
+                  y={height - padding.bottom + 22}
                   textAnchor="middle"
                   className="label"
                 >
@@ -276,11 +398,33 @@ export default function ExpenseLineChart({
                 </text>
               ) : null
             )}
-          </svg>
+              </svg>
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      </div>
 
       <style jsx>{`
+        .chart-layout {
+          display: flex;
+          gap: 24px;
+          align-items: stretch;
+        }
+
+        .chart-meta {
+          flex: 0 0 280px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        .chart-area {
+          flex: 1;
+          min-width: 320px;
+          display: flex;
+          align-items: center;
+        }
+
         .chart {
           width: 100%;
         }
@@ -291,12 +435,10 @@ export default function ExpenseLineChart({
           display: block;
         }
 
-        .chart-header {
+        .selectors {
           display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 16px;
-          flex-wrap: wrap;
+          gap: 12px;
+          flex-direction: column;
         }
 
         .selector {
@@ -351,6 +493,21 @@ export default function ExpenseLineChart({
         .chart-empty {
           margin: 0;
           color: #666a73;
+        }
+
+        @media (max-width: 900px) {
+          .chart-layout {
+            flex-direction: column;
+          }
+
+          .chart-meta {
+            flex: 1 1 auto;
+          }
+
+          .selectors {
+            flex-direction: row;
+            flex-wrap: wrap;
+          }
         }
       `}</style>
     </section>

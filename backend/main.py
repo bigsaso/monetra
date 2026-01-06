@@ -872,13 +872,17 @@ def delete_pay_schedule(
 
 @app.get("/transactions", response_model=list[TransactionResponse])
 def list_transactions(
+    account_id: int | None = None,
     x_user_id: str | None = Header(None, alias="x-user-id"),
 ) -> list[TransactionResponse]:
     user_id = get_user_id(x_user_id)
+    conditions = [transactions.c.user_id == user_id]
+    if account_id is not None:
+        conditions.append(transactions.c.account_id == account_id)
     with engine.begin() as conn:
         result = conn.execute(
             select(transactions)
-            .where(transactions.c.user_id == user_id)
+            .where(*conditions)
             .order_by(transactions.c.date.desc(), transactions.c.id.desc())
         )
         rows = result.mappings().all()

@@ -278,25 +278,7 @@ export default function DashboardClient({ userEmail }) {
           ) : null}
         </section>
 
-        <ExpenseLineChart
-          title="AMEX expenses"
-          subtitle="Spend trend for AMEX-linked transactions."
-          cardLabel="AMEX"
-          accounts={accounts}
-          transactions={transactions}
-          loading={loading}
-          error={error}
-        />
-
-        <ExpenseLineChart
-          title="Visa expenses"
-          subtitle="Spend trend for Visa-linked transactions."
-          cardLabel="Visa"
-          accounts={accounts}
-          transactions={transactions}
-          loading={loading}
-          error={error}
-        />
+        <ExpenseLineChart />
       </main>
 
       <style jsx>{`
