@@ -14,6 +14,117 @@ const buildEmptyForm = (dateValue) => ({
   notes: ""
 });
 
+const normalizeAmount = (value) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return Number.NaN;
+  }
+  let cleaned = raw;
+  let negative = false;
+  if (cleaned.startsWith("(") && cleaned.endsWith(")")) {
+    negative = true;
+    cleaned = cleaned.slice(1, -1);
+  }
+  cleaned = cleaned.replace(/[^0-9.-]/g, "");
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed)) {
+    return Number.NaN;
+  }
+  return negative ? -parsed : parsed;
+};
+
+const normalizeDate = (value) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return "";
+  }
+  const trimmed = raw.split(" ")[0];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  const monthNameMatch = trimmed.match(
+    /^(\d{1,2})[\/-]([A-Za-z]{3,9})[\/-](\d{2}|\d{4})$/
+  );
+  if (monthNameMatch) {
+    const monthMap = {
+      jan: "01",
+      january: "01",
+      feb: "02",
+      february: "02",
+      mar: "03",
+      march: "03",
+      apr: "04",
+      april: "04",
+      may: "05",
+      jun: "06",
+      june: "06",
+      jul: "07",
+      july: "07",
+      aug: "08",
+      august: "08",
+      sep: "09",
+      sept: "09",
+      september: "09",
+      oct: "10",
+      october: "10",
+      nov: "11",
+      november: "11",
+      dec: "12",
+      december: "12"
+    };
+    const day = monthNameMatch[1].padStart(2, "0");
+    const monthKey = monthNameMatch[2].toLowerCase();
+    const month = monthMap[monthKey];
+    if (!month) {
+      return trimmed;
+    }
+    let year = monthNameMatch[3];
+    if (year.length === 2) {
+      year = `20${year}`;
+    }
+    return `${year}-${month}-${day}`;
+  }
+  const match = trimmed.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2}|\d{4})$/);
+  if (!match) {
+    return trimmed;
+  }
+  let year = match[3];
+  if (year.length === 2) {
+    year = `20${year}`;
+  }
+  const month = match[1].padStart(2, "0");
+  const day = match[2].padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const isValidIsoDate = (value) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value));
+
+const formatImportError = (detail) => {
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => item?.msg || JSON.stringify(item))
+      .join(" ");
+  }
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (detail) {
+    return JSON.stringify(detail);
+  }
+  return "Failed to import transactions.";
+};
+
+const formatAmountSign = (type) => {
+  if (type === "expense") {
+    return "-";
+  }
+  if (type === "income") {
+    return "+";
+  }
+  return "";
+};
+
 const parseCsvText = (text) => {
   const rows = [];
   let row = [];
@@ -65,9 +176,21 @@ const parseCsvText = (text) => {
 
 const buildPreviewRows = (text) => {
   const rows = parseCsvText(text);
-  if (rows.length < 2) {
-    throw new Error("CSV must include a header row and at least one entry.");
+  if (rows.length < 1) {
+    throw new Error("CSV must include at least one entry.");
   }
+
+  const looksLikeHeaderless = (row) => {
+    if (row.length < 3) {
+      return false;
+    }
+    const dateValue = normalizeDate(row[0]);
+    if (!isValidIsoDate(dateValue)) {
+      return false;
+    }
+    const amountValue = normalizeAmount(row[2]);
+    return Number.isFinite(amountValue);
+  };
 
   const headers = rows[0].map((header) => header.trim());
   const normalized = headers.map((header) => header.toLowerCase());
@@ -92,18 +215,33 @@ const buildPreviewRows = (text) => {
     (header) => header === "category" || header.includes("category")
   );
 
+  let dataRows = rows.slice(1);
+  let resolvedDateIndex = dateIndex;
+  let resolvedDescriptionIndex = descriptionIndex;
+  let resolvedAmountIndex = amountIndex;
+  let resolvedCategoryIndex = categoryIndex;
+
   if (dateIndex < 0 || descriptionIndex < 0 || amountIndex < 0) {
-    throw new Error(
-      "CSV needs columns for date, description, and amount."
-    );
+    if (looksLikeHeaderless(rows[0])) {
+      dataRows = rows;
+      resolvedDateIndex = 0;
+      resolvedDescriptionIndex = 1;
+      resolvedAmountIndex = 2;
+      resolvedCategoryIndex = -1;
+    } else {
+      throw new Error("CSV needs columns for date, description, and amount.");
+    }
   }
 
-  return rows.slice(1).map((row, index) => ({
+  return dataRows.map((row, index) => ({
     id: `csv-${index}`,
-    date: row[dateIndex]?.trim() || "",
-    description: row[descriptionIndex]?.trim() || "",
-    amount: row[amountIndex]?.trim() || "",
-    category: categoryIndex >= 0 ? row[categoryIndex]?.trim() || "" : ""
+    date: row[resolvedDateIndex]?.trim() || "",
+    description: row[resolvedDescriptionIndex]?.trim() || "",
+    amount: row[resolvedAmountIndex]?.trim() || "",
+    category:
+      resolvedCategoryIndex >= 0
+        ? row[resolvedCategoryIndex]?.trim() || ""
+        : ""
   }));
 };
 
@@ -122,8 +260,13 @@ export default function TransactionsClient() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [importRows, setImportRows] = useState([]);
   const [importError, setImportError] = useState("");
+  const [importCommitError, setImportCommitError] = useState("");
+  const [importSuccess, setImportSuccess] = useState("");
+  const [importSaving, setImportSaving] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [bulkCategory, setBulkCategory] = useState("");
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const currencyFormatter = useMemo(
     () =>
@@ -133,6 +276,26 @@ export default function TransactionsClient() {
       }),
     []
   );
+  const totalPages = Math.max(
+    1,
+    Math.ceil(transactions.length / rowsPerPage)
+  );
+  const pagedTransactions = useMemo(() => {
+    const start = (currentPage - 1) * rowsPerPage;
+    return transactions.slice(start, start + rowsPerPage);
+  }, [currentPage, rowsPerPage, transactions]);
+
+  useEffect(() => {
+    setCurrentPage((prev) => {
+      if (prev < 1) {
+        return 1;
+      }
+      if (prev > totalPages) {
+        return totalPages;
+      }
+      return prev;
+    });
+  }, [totalPages]);
 
   const loadData = async () => {
     setLoading(true);
@@ -334,6 +497,8 @@ export default function TransactionsClient() {
       return;
     }
     setImportError("");
+    setImportCommitError("");
+    setImportSuccess("");
     const reader = new FileReader();
     reader.onload = () => {
       try {
@@ -364,6 +529,79 @@ export default function TransactionsClient() {
     setShowImportModal(false);
     setImportRows([]);
     setBulkCategory("");
+    setImportCommitError("");
+  };
+
+  const handleImportRowsChange = (updater) => {
+    setImportCommitError("");
+    setImportRows(updater);
+  };
+
+  const handleCommitImport = async () => {
+    if (!form.account_id) {
+      setImportCommitError("Select an account before importing.");
+      return;
+    }
+    if (importRows.length === 0) {
+      setImportCommitError("No rows ready for import.");
+      return;
+    }
+    const hasMissingCategory = importRows.some(
+      (row) => !row.category || !row.category.trim()
+    );
+    if (hasMissingCategory) {
+      setImportCommitError("Assign a category to every row before importing.");
+      return;
+    }
+    const normalizedTransactions = [];
+    for (const [index, row] of importRows.entries()) {
+      const dateValue = normalizeDate(row.date);
+      if (!isValidIsoDate(dateValue)) {
+        setImportCommitError(
+          `Row ${index + 1} has an invalid date. Use YYYY-MM-DD or MM/DD/YYYY.`
+        );
+        return;
+      }
+      const amountValue = normalizeAmount(row.amount);
+      if (!Number.isFinite(amountValue) || amountValue <= 0) {
+        setImportCommitError(
+          `Row ${index + 1} has an invalid amount. Use a positive number.`
+        );
+        return;
+      }
+      normalizedTransactions.push({
+        date: dateValue,
+        description: row.description,
+        amount: amountValue,
+        category: row.category ? row.category.trim() : ""
+      });
+    }
+    setImportSaving(true);
+    setImportCommitError("");
+    try {
+      const payload = {
+        account_id: Number(form.account_id),
+        transactions: normalizedTransactions
+      };
+      const response = await fetch("/api/transactions/import/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(formatImportError(data?.detail));
+      }
+      await loadData();
+      handleCloseImportModal();
+      setImportSuccess(
+        `Imported ${data?.inserted_count || importRows.length} expenses.`
+      );
+    } catch (err) {
+      setImportCommitError(err.message);
+    } finally {
+      setImportSaving(false);
+    }
   };
 
   return (
@@ -405,6 +643,7 @@ export default function TransactionsClient() {
             <select name="type" value={form.type} onChange={handleChange}>
               <option value="income">Income</option>
               <option value="expense">Expense</option>
+              <option value="investment">Investment</option>
             </select>
           </label>
           <label>
@@ -494,10 +733,60 @@ export default function TransactionsClient() {
         <p>Upload a CSV to preview expenses before saving.</p>
         <input type="file" accept=".csv,text/csv" onChange={handleCsvUpload} />
         {importError ? <p style={{ color: "crimson" }}>{importError}</p> : null}
+        {importSuccess ? (
+          <p style={{ color: "seagreen" }}>{importSuccess}</p>
+        ) : null}
       </section>
 
       <section>
         <h2>Recent transactions</h2>
+        {!loading && transactions.length > 0 ? (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: "12px",
+              marginBottom: "12px"
+            }}
+          >
+            <label>
+              Rows per page{" "}
+              <select
+                value={rowsPerPage}
+                onChange={(event) => {
+                  setRowsPerPage(Number(event.target.value));
+                  setCurrentPage(1);
+                }}
+              >
+                {[5, 10, 25, 50].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span>
+              Page {currentPage} of {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={currentPage <= 1}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setCurrentPage((prev) => Math.min(totalPages, prev + 1))
+              }
+              disabled={currentPage >= totalPages}
+            >
+              Next
+            </button>
+          </div>
+        ) : null}
         {loading ? <p>Loading transactions...</p> : null}
         {error ? <p style={{ color: "crimson" }}>{error}</p> : null}
         {!loading && transactions.length === 0 ? (
@@ -516,7 +805,7 @@ export default function TransactionsClient() {
               </tr>
             </thead>
             <tbody>
-              {transactions.map((transaction) => (
+              {pagedTransactions.map((transaction) => (
                 <tr key={transaction.id}>
                   <td>{transaction.date}</td>
                   <td>{accountLookup[transaction.account_id] || "-"}</td>
@@ -525,7 +814,7 @@ export default function TransactionsClient() {
                   </td>
                   <td>{transaction.category || "-"}</td>
                   <td align="right">
-                    {transaction.type === "expense" ? "-" : "+"}
+                    {formatAmountSign(transaction.type)}
                     {currencyFormatter.format(Number(transaction.amount || 0))}
                   </td>
                   <td>{transaction.notes || "-"}</td>
@@ -553,9 +842,16 @@ export default function TransactionsClient() {
           categories={categories}
           bulkCategory={bulkCategory}
           onBulkCategoryChange={setBulkCategory}
-          onRowsChange={setImportRows}
+          onRowsChange={handleImportRowsChange}
           onManageCategories={() => setShowCategoryModal(true)}
           onClose={handleCloseImportModal}
+          onConfirm={handleCommitImport}
+          isImporting={importSaving}
+          importError={importCommitError}
+          hasAccount={Boolean(form.account_id)}
+          accountName={
+            form.account_id ? accountLookup[Number(form.account_id)] : ""
+          }
         />
       ) : null}
       {showCategoryModal ? (

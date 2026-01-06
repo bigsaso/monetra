@@ -29,11 +29,18 @@ export default function CsvImportPreviewModal({
   onBulkCategoryChange,
   onRowsChange,
   onManageCategories,
-  onClose
+  onClose,
+  onConfirm,
+  isImporting,
+  importError,
+  hasAccount,
+  accountName
 }) {
   const hasMissingCategory = rows.some(
     (row) => !row.category || !row.category.trim()
   );
+  const confirmDisabled =
+    isImporting || rows.length === 0 || hasMissingCategory || !hasAccount;
 
   const handleRowCategoryChange = (index, nextCategory) => {
     onRowsChange((prev) => {
@@ -114,6 +121,11 @@ export default function CsvImportPreviewModal({
             Every row needs a category before import.
           </p>
         ) : null}
+        {!hasAccount ? (
+          <p style={{ color: "crimson", margin: 0 }}>
+            Select an account before importing expenses.
+          </p>
+        ) : null}
 
         <div style={{ maxHeight: "50vh", overflow: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -148,6 +160,7 @@ export default function CsvImportPreviewModal({
                         onChange={(event) =>
                           handleRowCategoryChange(index, event.target.value)
                         }
+                        aria-invalid={missingCategory}
                       >
                         <option value="">Uncategorized</option>
                         {categories.map((category) => (
@@ -156,6 +169,11 @@ export default function CsvImportPreviewModal({
                           </option>
                         ))}
                       </select>
+                      {missingCategory ? (
+                        <div style={{ color: "crimson", fontSize: "12px" }}>
+                          Category required
+                        </div>
+                      ) : null}
                     </td>
                     <td>
                       <button
@@ -172,9 +190,26 @@ export default function CsvImportPreviewModal({
           </table>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        {importError ? (
+          <p style={{ color: "crimson", margin: 0 }}>{importError}</p>
+        ) : null}
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "12px"
+          }}
+        >
+          <span style={{ color: "#555" }}>
+            {accountName ? `Importing to ${accountName}` : "Account required"}
+          </span>
           <button type="button" onClick={onClose}>
             Done reviewing
+          </button>
+          <button type="button" onClick={onConfirm} disabled={confirmDisabled}>
+            {isImporting ? "Importing..." : "Import expenses"}
           </button>
         </div>
       </div>

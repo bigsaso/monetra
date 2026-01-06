@@ -123,7 +123,13 @@ export default function DashboardClient({ userEmail }) {
         return total;
       }
       const amount = Number(transaction.amount || 0);
-      return transaction.type === "expense" ? total - amount : total + amount;
+      if (transaction.type === "expense") {
+        return total - amount;
+      }
+      if (transaction.type === "income") {
+        return total + amount;
+      }
+      return total;
     }, 0);
   }, [transactions]);
 
@@ -365,10 +371,16 @@ export default function DashboardClient({ userEmail }) {
                           className={
                             transaction.type === "expense"
                               ? "amount down"
-                              : "amount up"
+                              : transaction.type === "income"
+                                ? "amount up"
+                                : "amount"
                           }
                         >
-                          {transaction.type === "expense" ? "-" : "+"}
+                          {transaction.type === "expense"
+                            ? "-"
+                            : transaction.type === "income"
+                              ? "+"
+                              : ""}
                           {currencyFormatter.format(
                             Number(transaction.amount || 0)
                           )}

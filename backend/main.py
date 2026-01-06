@@ -142,7 +142,7 @@ class AccountResponse(AccountBase):
 
 
 class TransactionType:
-    values = {"income", "expense"}
+    values = {"income", "expense", "investment"}
 
     @classmethod
     def validate(cls, value: str) -> str:
@@ -293,6 +293,24 @@ class TransactionImportPreviewResponse(BaseModel):
     transactions: list[ParsedTransaction]
     total_count: int
     total_amount: Decimal
+
+
+class TransactionImportRow(BaseModel):
+    date: date
+    description: str
+    amount: Decimal
+    category: str | None = None
+    account_id: int | None = None
+    notes: str | None = None
+
+
+class TransactionImportCommitPayload(BaseModel):
+    account_id: int | None = None
+    transactions: list[TransactionImportRow]
+
+
+class TransactionImportCommitResponse(BaseModel):
+    inserted_count: int
 
 
 def hash_password(password: str) -> str:
@@ -725,6 +743,74 @@ async def preview_transaction_import(
         total_count=len(parse_result.rows),
         total_amount=total_amount,
     )
+
+
+@app.post("/transactions/import/commit", response_model=TransactionImportCommitResponse)
+def commit_transaction_import(
+    payload: TransactionImportCommitPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> TransactionImportCommitResponse:
+    user_id = get_user_id(x_user_id)
+
+    if not payload.transactions:
+        raise HTTPException(status_code=400, detail="No transactions to import.")
+
+    resolved_account_ids = {
+        row.account_id if row.account_id is not None else payload.account_id
+        for row in payload.transactions
+    }
+    if None in resolved_account_ids:
+        raise HTTPException(status_code=400, detail="Account is required for import.")
+
+    insert_rows: list[dict] = []
+    for index, row in enumerate(payload.transactions, start=1):
+        description = row.description.strip()
+        category = row.category.strip() if row.category else ""
+        notes = row.notes.strip() if row.notes else ""
+        if not notes:
+            notes = description
+        if not description:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Row {index} is missing a description.",
+            )
+        if not category:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Row {index} is missing a category.",
+            )
+        if row.amount <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Row {index} must be a positive expense amount.",
+            )
+
+        account_id = row.account_id if row.account_id is not None else payload.account_id
+        insert_rows.append(
+            {
+                "user_id": user_id,
+                "account_id": account_id,
+                "amount": row.amount,
+                "type": "expense",
+                "category": category,
+                "date": row.date,
+                "notes": notes or None,
+            }
+        )
+
+    with engine.begin() as conn:
+        account_rows = conn.execute(
+            select(accounts.c.id).where(
+                accounts.c.user_id == user_id,
+                accounts.c.id.in_(resolved_account_ids),
+            )
+        ).scalars().all()
+        if len(account_rows) != len(resolved_account_ids):
+            raise HTTPException(status_code=404, detail="Account not found.")
+
+        conn.execute(insert(transactions), insert_rows)
+
+    return TransactionImportCommitResponse(inserted_count=len(insert_rows))
 
 
 @app.post("/transactions", response_model=TransactionResponse)
