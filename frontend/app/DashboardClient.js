@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import CategoryBreakdownChart from "./components/CategoryBreakdownChart";
-import MonthlyTrendsChart from "./components/MonthlyTrendsChart";
+import ExpenseLineChart from "./components/ExpenseLineChart";
+import MonthlyCashflowChart from "./components/MonthlyCashflowChart";
 import SignOutButton from "./components/SignOutButton";
 import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
 import { useMonthlyTrends } from "../lib/useMonthlyTrends";
@@ -12,16 +13,6 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD"
 });
-
-const formatDate = (value) => {
-  if (!value) return "-";
-  const date = new Date(`${value}T00:00:00`);
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric"
-  });
-};
 
 export default function DashboardClient({ userEmail }) {
   const [accounts, setAccounts] = useState([]);
@@ -101,18 +92,6 @@ export default function DashboardClient({ userEmail }) {
     loadBudgetEvaluations();
   }, []);
 
-  const accountCounts = useMemo(() => {
-    const counts = {};
-    accounts.forEach((account) => {
-      counts[account.id] = 0;
-    });
-    transactions.forEach((transaction) => {
-      counts[transaction.account_id] =
-        (counts[transaction.account_id] || 0) + 1;
-    });
-    return counts;
-  }, [accounts, transactions]);
-
   const netFlow = useMemo(() => {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
@@ -132,11 +111,6 @@ export default function DashboardClient({ userEmail }) {
       return total;
     }, 0);
   }, [transactions]);
-
-  const recentTransactions = useMemo(
-    () => transactions.slice(0, 10),
-    [transactions]
-  );
 
   const budgetRuleName = (rule) => {
     const ruleTypeLabels = {
@@ -232,35 +206,14 @@ export default function DashboardClient({ userEmail }) {
 
         <section className="card">
           <div className="card-header">
-            <h2>Accounts</h2>
-            <p className="subtle">Total transactions per account.</p>
+            <h2>Monthly cashflow</h2>
+            <p className="subtle">Income, expenses, and net cashflow.</p>
           </div>
-          {loading ? <p>Loading accounts...</p> : null}
-          {error ? <p className="error">{error}</p> : null}
-          {!loading && accounts.length === 0 ? (
-            <p>No accounts yet. Add one to start tracking.</p>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th align="left">Account</th>
-                  <th align="left">Type</th>
-                  <th align="left">Institution</th>
-                  <th align="right">Transactions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {accounts.map((account) => (
-                  <tr key={account.id}>
-                    <td>{account.name}</td>
-                    <td className="caps">{account.type}</td>
-                    <td>{account.institution || "-"}</td>
-                    <td align="right">{accountCounts[account.id] || 0}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          {trendsLoading ? <p>Loading monthly cashflow...</p> : null}
+          {trendsError ? <p className="error">{trendsError}</p> : null}
+          {!trendsLoading && !trendsError ? (
+            <MonthlyCashflowChart data={monthlyTrends} />
+          ) : null}
         </section>
 
         <section className="card span">
@@ -325,78 +278,25 @@ export default function DashboardClient({ userEmail }) {
           ) : null}
         </section>
 
-        <section className="card span">
-          <div className="card-header">
-            <h2>Monthly trends</h2>
-            <p className="subtle">Income, expenses, and net cashflow.</p>
-          </div>
-          {trendsLoading ? <p>Loading monthly trends...</p> : null}
-          {trendsError ? <p className="error">{trendsError}</p> : null}
-          {!trendsLoading && !trendsError ? (
-            <MonthlyTrendsChart data={monthlyTrends} />
-          ) : null}
-        </section>
+        <ExpenseLineChart
+          title="AMEX expenses"
+          subtitle="Spend trend for AMEX-linked transactions."
+          cardLabel="AMEX"
+          accounts={accounts}
+          transactions={transactions}
+          loading={loading}
+          error={error}
+        />
 
-        <section className="card span">
-          <div className="card-header">
-            <h2>Last 10 transactions</h2>
-            <p className="subtle">Newest activity across your accounts.</p>
-          </div>
-          {loading ? <p>Loading transactions...</p> : null}
-          {error ? <p className="error">{error}</p> : null}
-          {!loading && recentTransactions.length === 0 ? (
-            <p>No transactions yet.</p>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th align="left">Date</th>
-                  <th align="left">Account</th>
-                  <th align="left">Type</th>
-                  <th align="left">Category</th>
-                  <th align="right">Amount</th>
-                  <th align="left">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentTransactions.map((transaction) => {
-                  const account = accounts.find(
-                    (item) => item.id === transaction.account_id
-                  );
-                  return (
-                    <tr key={transaction.id}>
-                      <td>{formatDate(transaction.date)}</td>
-                      <td>{account?.name || "-"}</td>
-                      <td className="caps">{transaction.type}</td>
-                      <td>{transaction.category || "-"}</td>
-                      <td align="right">
-                        <span
-                          className={
-                            transaction.type === "expense"
-                              ? "amount down"
-                              : transaction.type === "income"
-                                ? "amount up"
-                                : "amount"
-                          }
-                        >
-                          {transaction.type === "expense"
-                            ? "-"
-                            : transaction.type === "income"
-                              ? "+"
-                              : ""}
-                          {currencyFormatter.format(
-                            Number(transaction.amount || 0)
-                          )}
-                        </span>
-                      </td>
-                      <td>{transaction.notes || "-"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </section>
+        <ExpenseLineChart
+          title="Visa expenses"
+          subtitle="Spend trend for Visa-linked transactions."
+          cardLabel="Visa"
+          accounts={accounts}
+          transactions={transactions}
+          loading={loading}
+          error={error}
+        />
       </main>
 
       <style jsx>{`

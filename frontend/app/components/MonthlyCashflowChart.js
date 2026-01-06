@@ -11,7 +11,7 @@ const formatAmount = (value) => currencyFormatter.format(value);
 
 const formatMonthLabel = (value) => value || "-";
 
-export default function MonthlyTrendsChart({ data }) {
+export default function MonthlyCashflowChart({ data }) {
   const containerRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
 
@@ -88,7 +88,7 @@ export default function MonthlyTrendsChart({ data }) {
     : {};
 
   if (!chartData.length) {
-    return <p className="chart-empty">No monthly trend data yet.</p>;
+    return <p className="chart-empty">No monthly cashflow data yet.</p>;
   }
 
   return (
