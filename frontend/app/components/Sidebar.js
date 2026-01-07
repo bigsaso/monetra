@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import SidebarNavItem from "./SidebarNavItem";
 import SignOutButton from "./SignOutButton";
@@ -24,8 +25,10 @@ export default function Sidebar() {
   return (
     <aside className="fixed inset-y-0 left-0 flex w-64 flex-col border-r border-slate-200/80 bg-white/90 px-4 py-6 backdrop-blur">
       <div className="px-2 pb-6">
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">App</p>
-        <p className="mt-2 text-lg font-semibold text-slate-900">Monetra</p>
+        <div className="flex flex-col items-start gap-3">
+          <Image src="/logo.svg" alt="Monetra" width={128} height={128} />
+          <p className="text-lg font-semibold text-slate-900">Monetra</p>
+        </div>
       </div>
       <nav className="flex flex-1 flex-col gap-1">
         {navItems.map((item) => (
