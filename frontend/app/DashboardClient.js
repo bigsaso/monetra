@@ -1,12 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import CategoryBreakdownChart from "./components/CategoryBreakdownChart";
 import ExpenseLineChart from "./components/ExpenseLineChart";
 import ExpenseGroupPieChart from "./components/ExpenseGroupPieChart";
 import MonthlyCashflowChart from "./components/MonthlyCashflowChart";
-import SignOutButton from "./components/SignOutButton";
 import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
@@ -62,7 +60,7 @@ const getMonthDateRange = (value) => {
   return { startDate: formatDateValue(start), endDate: formatDateValue(end) };
 };
 
-export default function DashboardClient({ userEmail }) {
+export default function DashboardClient() {
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [budgetEvaluations, setBudgetEvaluations] = useState([]);
@@ -231,9 +229,6 @@ export default function DashboardClient({ userEmail }) {
     return Math.max(0, Math.min(ratio, 1));
   };
 
-  const actionClass =
-    "rounded-full border border-slate-900 px-4 py-2 text-sm font-medium transition hover:-translate-y-0.5 hover:shadow-md";
-
   const handleCategoryPreviousMonth = () => {
     setCategoryBreakdownMonth((prev) =>
       shiftMonth(prev || formatMonthValue(new Date()), -1)
@@ -248,38 +243,6 @@ export default function DashboardClient({ userEmail }) {
 
   return (
     <div className="min-h-screen px-5 py-12 pb-20 sm:px-8 lg:px-16">
-      <header className="mb-8 flex flex-wrap items-center justify-between gap-6 rounded-3xl border border-slate-200/70 bg-white/75 p-6 shadow-[0_18px_40px_rgba(20,24,36,0.08)] backdrop-blur">
-        <div>
-          <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-500">
-            Monetra
-          </p>
-          <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">
-            Read-only dashboard
-          </h1>
-          <p className="mt-2 text-sm text-slate-500">
-            {userEmail ? `Signed in as ${userEmail}.` : "Welcome back."}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Link href="/accounts" className={`${actionClass} bg-transparent text-slate-900`}>
-            Manage accounts
-          </Link>
-          <Link href="/pay-schedules" className={`${actionClass} bg-transparent text-slate-900`}>
-            Pay schedules
-          </Link>
-          <Link href="/investments" className={`${actionClass} bg-transparent text-slate-900`}>
-            Investments
-          </Link>
-          <Link href="/transactions" className={`${actionClass} bg-transparent text-slate-900`}>
-            View transactions
-          </Link>
-          <Link href="/budget" className={`${actionClass} bg-transparent text-slate-900`}>
-            Budget settings
-          </Link>
-          <SignOutButton className={`${actionClass} bg-slate-900 text-white`} />
-        </div>
-      </header>
-
       <main className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         <Card className="lg:col-span-6 bg-gradient-to-br from-amber-100 to-blue-50">
           <CardContent className="pt-6">

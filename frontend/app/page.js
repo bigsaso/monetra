@@ -11,7 +11,7 @@ export default async function Home() {
     <>
       {session ? (
         <AppShell>
-          <DashboardClient userEmail={session.user.email} />
+          <DashboardClient />
         </AppShell>
       ) : (
         <main
