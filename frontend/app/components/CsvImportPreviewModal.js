@@ -1,29 +1,26 @@
 "use client";
 
-const overlayStyle = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(18, 20, 24, 0.45)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: "24px",
-  zIndex: 1000
-};
-
-const modalStyle = {
-  width: "min(880px, 100%)",
-  background: "#ffffff",
-  borderRadius: "16px",
-  border: "1px solid rgba(34, 37, 43, 0.1)",
-  boxShadow: "0 18px 40px rgba(20, 24, 36, 0.2)",
-  padding: "24px",
-  display: "grid",
-  gap: "16px"
-};
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "./ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "./ui/table";
 
 export default function CsvImportPreviewModal({
   rows,
+  accounts,
   categories,
   bulkCategory,
   onBulkCategoryChange,
@@ -34,7 +31,9 @@ export default function CsvImportPreviewModal({
   isImporting,
   importError,
   hasAccount,
-  accountName
+  accountName,
+  selectedAccountId,
+  onAccountChange
 }) {
   const hasMissingCategory = rows.some(
     (row) => !row.category || !row.category.trim()
@@ -69,32 +68,47 @@ export default function CsvImportPreviewModal({
     onRowsChange((prev) => prev.filter((row) => row.id !== rowId));
   };
 
-  return (
-    <div style={overlayStyle} role="dialog" aria-modal="true">
-      <div style={modalStyle}>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <div>
-            <h3 style={{ margin: 0 }}>Preview CSV import</h3>
-            <p style={{ margin: "4px 0 0", color: "#555" }}>
-              {rows.length} expenses ready to review.
-            </p>
-          </div>
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
+  const selectClass =
+    "mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10";
+  const buttonClass =
+    "rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60";
+  const ghostButtonClass =
+    "rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60";
 
-        <div
-          style={{
-            display: "flex",
-            gap: "12px",
-            flexWrap: "wrap",
-            alignItems: "center"
-          }}
-        >
-          <label style={{ display: "grid", gap: "6px" }}>
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : null)}>
+      <DialogContent className="sm:max-w-[880px]">
+        <DialogHeader>
+          <DialogTitle>Preview CSV import</DialogTitle>
+          <DialogDescription>
+            {rows.length} expenses ready to review.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs uppercase tracking-[0.12em] text-slate-500">
+            Import to account
+            <select
+              className={selectClass}
+              value={selectedAccountId}
+              onChange={(event) => onAccountChange(event.target.value)}
+              disabled={accounts.length === 0}
+            >
+              {accounts.length === 0 ? (
+                <option value="">No accounts available</option>
+              ) : (
+                accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+          <label className="text-xs uppercase tracking-[0.12em] text-slate-500">
             Bulk assign category
             <select
+              className={selectClass}
               value={bulkCategory}
               onChange={(event) => onBulkCategoryChange(event.target.value)}
             >
@@ -106,56 +120,50 @@ export default function CsvImportPreviewModal({
               ))}
             </select>
           </label>
-          <button type="button" onClick={applyBulkCategory}>
+          <button type="button" onClick={applyBulkCategory} className={ghostButtonClass}>
             Apply to all rows
           </button>
-        </div>
-        <div>
-          <button type="button" onClick={onManageCategories}>
+          <button type="button" onClick={onManageCategories} className={ghostButtonClass}>
             Add/manage categories
           </button>
         </div>
 
         {hasMissingCategory ? (
-          <p style={{ color: "crimson", margin: 0 }}>
+          <p className="text-sm text-rose-600">
             Every row needs a category before import.
           </p>
         ) : null}
         {!hasAccount ? (
-          <p style={{ color: "crimson", margin: 0 }}>
+          <p className="text-sm text-rose-600">
             Select an account before importing expenses.
           </p>
         ) : null}
 
-        <div style={{ maxHeight: "50vh", overflow: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th align="left">Date</th>
-                <th align="left">Description</th>
-                <th align="right">Amount</th>
-                <th align="left">Category</th>
-                <th align="left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className="max-h-[50vh] overflow-auto rounded-lg border border-slate-200">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {rows.map((row, index) => {
-                const missingCategory =
-                  !row.category || !row.category.trim();
+                const missingCategory = !row.category || !row.category.trim();
                 return (
-                  <tr
+                  <TableRow
                     key={row.id}
-                    style={
-                      missingCategory
-                        ? { background: "rgba(220, 20, 60, 0.08)" }
-                        : undefined
-                    }
+                    className={missingCategory ? "bg-rose-50" : undefined}
                   >
-                    <td>{row.date}</td>
-                    <td>{row.description}</td>
-                    <td align="right">{row.amount}</td>
-                    <td>
+                    <TableCell>{row.date}</TableCell>
+                    <TableCell>{row.description}</TableCell>
+                    <TableCell className="text-right">{row.amount}</TableCell>
+                    <TableCell>
                       <select
+                        className={selectClass}
                         value={row.category}
                         onChange={(event) =>
                           handleRowCategoryChange(index, event.target.value)
@@ -170,49 +178,52 @@ export default function CsvImportPreviewModal({
                         ))}
                       </select>
                       {missingCategory ? (
-                        <div style={{ color: "crimson", fontSize: "12px" }}>
+                        <div className="mt-1 text-xs text-rose-600">
                           Category required
                         </div>
                       ) : null}
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       <button
                         type="button"
                         onClick={() => handleRemoveRow(row.id)}
+                        className={ghostButtonClass}
                       >
                         Remove row
                       </button>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
 
         {importError ? (
-          <p style={{ color: "crimson", margin: 0 }}>{importError}</p>
+          <p className="text-sm text-rose-600">{importError}</p>
         ) : null}
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "12px"
-          }}
-        >
-          <span style={{ color: "#555" }}>
+        <DialogFooter className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-sm text-slate-500">
             {accountName ? `Importing to ${accountName}` : "Account required"}
           </span>
-          <button type="button" onClick={onClose}>
-            Done reviewing
-          </button>
-          <button type="button" onClick={onConfirm} disabled={confirmDisabled}>
-            {isImporting ? "Importing..." : "Import expenses"}
-          </button>
-        </div>
-      </div>
-    </div>
+          <div className="flex flex-wrap gap-2">
+            <DialogClose asChild>
+              <button type="button" className={ghostButtonClass}>
+                Done reviewing
+              </button>
+            </DialogClose>
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={confirmDisabled}
+              className={buttonClass}
+            >
+              {isImporting ? "Importing..." : "Import expenses"}
+            </button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

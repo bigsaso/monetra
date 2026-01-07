@@ -2,6 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "../components/ui/table";
 
 const emptyForm = {
   amount: "",
@@ -195,123 +205,163 @@ export default function PaySchedulesClient() {
   };
 
   return (
-    <div style={{ maxWidth: "720px", margin: "40px auto", padding: "0 16px" }}>
-      <Link href="/" style={{ display: "inline-block", marginBottom: "16px" }}>
-        Back to dashboard
-      </Link>
-      <h1>Pay schedules</h1>
-      <p>Manage repeating pay days and their destination accounts.</p>
+    <div className="mx-auto max-w-3xl px-4 py-10">
+      <Button asChild variant="outline">
+        <Link href="/">← Back to dashboard</Link>
+      </Button>
+      <h1 className="mt-4 text-3xl font-semibold text-slate-900">
+        Pay schedules
+      </h1>
+      <p className="mt-2 text-sm text-slate-500">
+        Manage repeating pay days and their destination accounts.
+      </p>
 
-      <section style={{ marginBottom: "32px" }}>
-        <h2>{editingId ? "Edit pay schedule" : "Add pay schedule"}</h2>
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "12px" }}>
-          <label>
-            Amount
-            <input
-              name="amount"
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={form.amount}
-              onChange={handleChange}
-              required
-            />
-          </label>
-          <label>
-            Start date
-            <input
-              name="start_date"
-              type="date"
-              value={form.start_date}
-              onChange={handleChange}
-              required
-            />
-          </label>
-          <label>
-            Account
-            <select
-              name="account_id"
-              value={form.account_id}
-              onChange={handleChange}
-              disabled={accountsLoading}
-            >
-              {accounts.length === 0 ? (
-                <option value="">No accounts available</option>
-              ) : null}
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Frequency
-            <select
-              name="frequency"
-              value={form.frequency}
-              onChange={handleChange}
-            >
-              <option value="weekly">Weekly</option>
-              <option value="biweekly">Biweekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-          </label>
-          <div style={{ display: "flex", gap: "12px" }}>
-            <button type="submit" disabled={saving}>
-              {editingId ? "Save changes" : "Add schedule"}
-            </button>
-            {editingId ? (
-              <button type="button" onClick={handleCancel} disabled={saving}>
-                Cancel
-              </button>
-            ) : null}
-          </div>
-        </form>
-      </section>
+      <div className="mt-8 grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              {editingId ? "Edit pay schedule" : "Add pay schedule"}
+            </CardTitle>
+            <CardDescription>Keep recurring income organized.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="grid gap-4">
+              <label className="text-sm text-slate-600">
+                Amount
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="amount"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={form.amount}
+                  onChange={handleChange}
+                  required
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                Start date
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="start_date"
+                  type="date"
+                  value={form.start_date}
+                  onChange={handleChange}
+                  required
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                Account
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="account_id"
+                  value={form.account_id}
+                  onChange={handleChange}
+                  disabled={accountsLoading}
+                >
+                  {accounts.length === 0 ? (
+                    <option value="">No accounts available</option>
+                  ) : null}
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm text-slate-600">
+                Frequency
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="frequency"
+                  value={form.frequency}
+                  onChange={handleChange}
+                >
+                  <option value="weekly">Weekly</option>
+                  <option value="biweekly">Biweekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {editingId ? "Save changes" : "Add schedule"}
+                </button>
+                {editingId ? (
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    disabled={saving}
+                    className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                ) : null}
+              </div>
+            </form>
+          </CardContent>
+        </Card>
 
-      <section>
-        <h2>Your schedules</h2>
-        {loading ? <p>Loading pay schedules...</p> : null}
-        {error ? <p style={{ color: "crimson" }}>{error}</p> : null}
-        {!loading && schedules.length === 0 ? (
-          <p>No pay schedules yet.</p>
-        ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th align="left">Amount</th>
-                <th align="left">Start date</th>
-                <th align="left">Account</th>
-                <th align="left">Frequency</th>
-                <th align="left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {schedules.map((schedule) => (
-                <tr key={schedule.id}>
-                  <td>{currencyFormatter.format(schedule.amount)}</td>
-                  <td>{formatDate(schedule.start_date)}</td>
-                  <td>{accountLookup[schedule.account_id] || "-"}</td>
-                  <td>{schedule.frequency}</td>
-                  <td>
-                    <button type="button" onClick={() => handleEdit(schedule)}>
-                      Edit
-                    </button>{" "}
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(schedule.id)}
-                      disabled={saving}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+        <Card>
+          <CardHeader>
+            <CardTitle>Your schedules</CardTitle>
+            <CardDescription>Review upcoming income cadence.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? <p>Loading pay schedules...</p> : null}
+            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+            {!loading && schedules.length === 0 ? (
+              <p>No pay schedules yet.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Start date</TableHead>
+                    <TableHead>Account</TableHead>
+                    <TableHead>Frequency</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {schedules.map((schedule) => (
+                    <TableRow key={schedule.id}>
+                      <TableCell>
+                        {currencyFormatter.format(schedule.amount)}
+                      </TableCell>
+                      <TableCell>{formatDate(schedule.start_date)}</TableCell>
+                      <TableCell>{accountLookup[schedule.account_id] || "-"}</TableCell>
+                      <TableCell className="capitalize">
+                        {schedule.frequency}
+                      </TableCell>
+                      <TableCell className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleEdit(schedule)}
+                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(schedule.id)}
+                          disabled={saving}
+                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Delete
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

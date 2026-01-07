@@ -30,8 +30,10 @@ const CustomTooltip = ({ active, payload, label }) => {
   }, {});
 
   return (
-    <div className="tooltip">
-      <p className="tooltip-title">{formatMonthLabel(label)}</p>
+    <div className="rounded-lg border border-slate-200 bg-white/95 p-2 text-xs text-slate-700 shadow-lg">
+      <p className="mb-1 text-xs font-semibold text-slate-900">
+        {formatMonthLabel(label)}
+      </p>
       <p>Income: {formatAmount(data.income || 0)}</p>
       <p>Expenses: {formatAmount(data.expenses || 0)}</p>
       <p>Net: {formatAmount(data.net || 0)}</p>
@@ -57,143 +59,65 @@ export default function MonthlyCashflowChart({ data }) {
   );
 
   if (!chartData.length) {
-    return <p className="chart-empty">No monthly cashflow data yet.</p>;
+    return <p className="text-sm text-slate-500">No monthly cashflow data yet.</p>;
   }
 
   return (
-    <div className="chart">
-      <ResponsiveContainer width="100%" height={280}>
-        <ComposedChart
-          data={chartData}
-          margin={{ top: 20, right: 24, bottom: 36, left: 8 }}
-        >
-          <CartesianGrid stroke="rgba(34, 37, 43, 0.08)" vertical={false} />
-          <XAxis
-            dataKey="month"
-            tickFormatter={formatMonthLabel}
-            tick={{ fontSize: 11, fill: "#6b6f78" }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <YAxis
-            tickFormatter={formatAmount}
-            width={72}
-            tick={{ fontSize: 11, fill: "#6b6f78" }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <Tooltip
-            content={<CustomTooltip />}
-            cursor={{ fill: "rgba(46, 47, 51, 0.04)" }}
-            wrapperStyle={{ outline: "none" }}
-          />
-          <ReferenceLine
-            y={0}
-            stroke="rgba(34, 37, 43, 0.2)"
-            strokeWidth={1.2}
-          />
-          <Bar
-            dataKey="income"
-            fill="#1f7a4d"
-            radius={[4, 4, 0, 0]}
-            barSize={18}
-          />
-          <Bar
-            dataKey="expenses"
-            fill="#b23a3a"
-            radius={[4, 4, 0, 0]}
-            barSize={18}
-          />
-          <Line
-            type="monotone"
-            dataKey="net"
-            stroke="#2e2f33"
-            strokeWidth={2}
-            dot={{ r: 3, fill: "#2e2f33" }}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
-
-      <div className="legend">
-        <span className="legend-item">
-          <span className="legend-swatch income" /> Income
-        </span>
-        <span className="legend-item">
-          <span className="legend-swatch expense" /> Expenses
-        </span>
-        <span className="legend-item">
-          <span className="legend-swatch net" /> Net cashflow
-        </span>
+    <div className="space-y-3">
+      <div className="h-[280px] w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart
+            data={chartData}
+            margin={{ top: 20, right: 24, bottom: 36, left: 8 }}
+          >
+            <CartesianGrid stroke="rgba(34, 37, 43, 0.08)" vertical={false} />
+            <XAxis
+              dataKey="month"
+              tickFormatter={formatMonthLabel}
+              tick={{ fontSize: 11, fill: "#6b6f78" }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              tickFormatter={formatAmount}
+              width={72}
+              tick={{ fontSize: 11, fill: "#6b6f78" }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip
+              content={<CustomTooltip />}
+              cursor={{ fill: "rgba(46, 47, 51, 0.04)" }}
+              wrapperStyle={{ outline: "none" }}
+            />
+            <ReferenceLine y={0} stroke="rgba(34, 37, 43, 0.2)" strokeWidth={1.2} />
+            <Bar dataKey="income" fill="#1f7a4d" radius={[4, 4, 0, 0]} barSize={18} />
+            <Bar dataKey="expenses" fill="#b23a3a" radius={[4, 4, 0, 0]} barSize={18} />
+            <Line
+              type="monotone"
+              dataKey="net"
+              stroke="#2e2f33"
+              strokeWidth={2}
+              dot={{ r: 3, fill: "#2e2f33" }}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
       </div>
 
-      <style jsx>{`
-        .chart {
-          position: relative;
-          width: 100%;
-        }
-
-        .tooltip {
-          position: absolute;
-          background: rgba(255, 255, 255, 0.95);
-          border: 1px solid rgba(34, 37, 43, 0.1);
-          border-radius: 12px;
-          padding: 10px 12px;
-          font-size: 12px;
-          color: #2d3138;
-          box-shadow: 0 10px 20px rgba(20, 24, 36, 0.12);
-          min-width: 160px;
-        }
-
-        .tooltip-title {
-          margin: 0 0 6px;
-          font-weight: 600;
-          color: #2e2f33;
-        }
-
-        .tooltip p {
-          margin: 0;
-          line-height: 1.4;
-        }
-
-        .legend {
-          margin-top: 12px;
-          display: flex;
-          flex-wrap: wrap;
-          gap: 16px;
-          font-size: 12px;
-          color: #6b6f78;
-        }
-
-        .legend-item {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-        }
-
-        .legend-swatch {
-          width: 10px;
-          height: 10px;
-          border-radius: 999px;
-          background: #1f7a4d;
-        }
-
-        .legend-swatch.expense {
-          background: #b23a3a;
-        }
-
-        .legend-swatch.net {
-          background: #2e2f33;
-        }
-
-        .chart-empty {
-          margin: 0;
-          color: #666a73;
-        }
-
-        :global(.recharts-cartesian-axis-tick text) {
-          font-family: inherit;
-        }
-      `}</style>
+      <div className="flex flex-wrap gap-4 text-xs text-slate-500">
+        <span className="inline-flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />
+          Income
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full bg-rose-600" />
+          Expenses
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full bg-slate-900" />
+          Net cashflow
+        </span>
+      </div>
     </div>
   );
 }

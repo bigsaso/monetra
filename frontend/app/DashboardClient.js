@@ -6,6 +6,7 @@ import CategoryBreakdownChart from "./components/CategoryBreakdownChart";
 import ExpenseLineChart from "./components/ExpenseLineChart";
 import MonthlyCashflowChart from "./components/MonthlyCashflowChart";
 import SignOutButton from "./components/SignOutButton";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
 import { useMonthlyTrends } from "../lib/useMonthlyTrends";
 
@@ -13,6 +14,18 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD"
 });
+
+const statusBadgeClasses = {
+  success: "border-emerald-200 bg-emerald-100 text-emerald-700",
+  warning: "border-amber-200 bg-amber-100 text-amber-700",
+  danger: "border-rose-200 bg-rose-100 text-rose-700"
+};
+
+const progressFillClasses = {
+  success: "bg-emerald-500",
+  warning: "bg-amber-500",
+  danger: "bg-rose-500"
+};
 
 export default function DashboardClient({ userEmail }) {
   const [accounts, setAccounts] = useState([]);
@@ -168,370 +181,153 @@ export default function DashboardClient({ userEmail }) {
     return Math.max(0, Math.min(ratio, 1));
   };
 
+  const actionClass =
+    "rounded-full border border-slate-900 px-4 py-2 text-sm font-medium transition hover:-translate-y-0.5 hover:shadow-md";
+
   return (
-    <div className="page">
-      <header className="topbar">
+    <div className="min-h-screen px-5 py-12 pb-20 sm:px-8 lg:px-16">
+      <header className="mb-8 flex flex-wrap items-center justify-between gap-6 rounded-3xl border border-slate-200/70 bg-white/75 p-6 shadow-[0_18px_40px_rgba(20,24,36,0.08)] backdrop-blur">
         <div>
-          <p className="eyebrow">Monetra</p>
-          <h1>Read-only dashboard</h1>
-          <p className="subtle">
+          <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-500">
+            Monetra
+          </p>
+          <h1 className="text-3xl font-semibold text-slate-900 sm:text-4xl">
+            Read-only dashboard
+          </h1>
+          <p className="mt-2 text-sm text-slate-500">
             {userEmail ? `Signed in as ${userEmail}.` : "Welcome back."}
           </p>
         </div>
-        <div className="actions">
-          <Link href="/accounts" className="ghost">
+        <div className="flex flex-wrap items-center gap-3">
+          <Link href="/accounts" className={`${actionClass} bg-transparent text-slate-900`}>
             Manage accounts
           </Link>
-          <Link href="/pay-schedules" className="ghost">
+          <Link href="/pay-schedules" className={`${actionClass} bg-transparent text-slate-900`}>
             Pay schedules
           </Link>
-          <Link href="/transactions" className="ghost">
+          <Link href="/transactions" className={`${actionClass} bg-transparent text-slate-900`}>
             View transactions
           </Link>
-          <Link href="/budget" className="ghost">
+          <Link href="/budget" className={`${actionClass} bg-transparent text-slate-900`}>
             Budget settings
           </Link>
-          <SignOutButton />
+          <SignOutButton className={`${actionClass} bg-slate-900 text-white`} />
         </div>
       </header>
 
-      <main className="dashboard">
-        <section className="card highlight">
-          <p className="card-title">Net flow · {monthLabel}</p>
-          <p className="metric">{currencyFormatter.format(netFlow)}</p>
-          <p className="subtle">
-            Income minus expenses for the current month.
-          </p>
-        </section>
+      <main className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <Card className="lg:col-span-6 bg-gradient-to-br from-amber-100 to-blue-50">
+          <CardContent className="pt-6">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">
+              Net flow · {monthLabel}
+            </p>
+            <p className="mt-3 text-4xl font-semibold text-slate-900 sm:text-5xl">
+              {currencyFormatter.format(netFlow)}
+            </p>
+            <p className="mt-2 text-sm text-slate-500">
+              Income minus expenses for the current month.
+            </p>
+          </CardContent>
+        </Card>
 
-        <section className="card">
-          <div className="card-header">
-            <h2>Monthly cashflow</h2>
-            <p className="subtle">Income, expenses, and net cashflow.</p>
-          </div>
-          {trendsLoading ? <p>Loading monthly cashflow...</p> : null}
-          {trendsError ? <p className="error">{trendsError}</p> : null}
-          {!trendsLoading && !trendsError ? (
-            <MonthlyCashflowChart data={monthlyTrends} />
-          ) : null}
-        </section>
+        <Card className="lg:col-span-6">
+          <CardHeader>
+            <CardTitle>Monthly cashflow</CardTitle>
+            <CardDescription>Income, expenses, and net cashflow.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {trendsLoading ? <p>Loading monthly cashflow...</p> : null}
+            {trendsError ? <p className="text-rose-600">{trendsError}</p> : null}
+            {!trendsLoading && !trendsError ? (
+              <MonthlyCashflowChart data={monthlyTrends} />
+            ) : null}
+          </CardContent>
+        </Card>
 
-        <section className="card span">
-          <div className="card-header">
-            <h2>Budget overview</h2>
-            <p className="subtle">Monthly rule status across categories.</p>
-          </div>
-          {budgetLoading ? <p>Loading budget rules...</p> : null}
-          {budgetError ? <p className="error">{budgetError}</p> : null}
-          {!budgetLoading && budgetEvaluations.length === 0 ? (
-            <p>No budget rules to evaluate yet.</p>
-          ) : (
-            <div className="budget-rules">
-              {budgetEvaluations.map((rule) => {
-                const status = budgetStatus(rule);
-                const progressValue = Math.round(budgetProgress(rule) * 100);
-                return (
-                  <article key={rule.rule_id} className="budget-rule">
-                    <div className="budget-rule-header">
-                      <div>
-                        <p className="budget-name">{budgetRuleName(rule)}</p>
-                        <p className="budget-meta">
-                          {currencyFormatter.format(
-                            Number(rule.current_value || 0)
-                          )}{" "}
-                          of{" "}
-                          {currencyFormatter.format(Number(rule.amount || 0))}
-                        </p>
-                      </div>
-                      <span className={`status-badge ${status.tone}`}>
-                        {status.label}
-                      </span>
-                    </div>
-                    <div
-                      className="progress"
-                      role="progressbar"
-                      aria-valuenow={progressValue}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
+        <Card className="lg:col-span-12">
+          <CardHeader>
+            <CardTitle>Budget overview</CardTitle>
+            <CardDescription>
+              Monthly rule status across categories.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {budgetLoading ? <p>Loading budget rules...</p> : null}
+            {budgetError ? <p className="text-rose-600">{budgetError}</p> : null}
+            {!budgetLoading && budgetEvaluations.length === 0 ? (
+              <p>No budget rules to evaluate yet.</p>
+            ) : (
+              <div className="grid gap-4">
+                {budgetEvaluations.map((rule) => {
+                  const status = budgetStatus(rule);
+                  const progressValue = Math.round(budgetProgress(rule) * 100);
+                  return (
+                    <article
+                      key={rule.rule_id}
+                      className="rounded-xl border border-slate-200/70 bg-white/70 p-4"
                     >
-                      <span
-                        className={`progress-fill ${status.tone}`}
-                        style={{ width: `${progressValue}%` }}
-                      />
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">
+                            {budgetRuleName(rule)}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {currencyFormatter.format(
+                              Number(rule.current_value || 0)
+                            )}{" "}
+                            of {currencyFormatter.format(Number(rule.amount || 0))}
+                          </p>
+                        </div>
+                        <span
+                          className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                            statusBadgeClasses[status.tone]
+                          }`}
+                        >
+                          {status.label}
+                        </span>
+                      </div>
+                      <div
+                        className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-200/70"
+                        role="progressbar"
+                        aria-valuenow={progressValue}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                      >
+                        <span
+                          className={`block h-full rounded-full ${
+                            progressFillClasses[status.tone]
+                          }`}
+                          style={{ width: `${progressValue}%` }}
+                        />
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-        <section className="card span">
-          <div className="card-header">
-            <h2>Expense categories</h2>
-            <p className="subtle">Share of spending by category this month.</p>
-          </div>
-          {breakdownLoading ? <p>Loading category breakdown...</p> : null}
-          {breakdownError ? <p className="error">{breakdownError}</p> : null}
-          {!breakdownLoading && !breakdownError ? (
-            <CategoryBreakdownChart data={categoryBreakdown} />
-          ) : null}
-        </section>
+        <Card className="lg:col-span-12">
+          <CardHeader>
+            <CardTitle>Expense categories</CardTitle>
+            <CardDescription>
+              Share of spending by category this month.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {breakdownLoading ? <p>Loading category breakdown...</p> : null}
+            {breakdownError ? (
+              <p className="text-rose-600">{breakdownError}</p>
+            ) : null}
+            {!breakdownLoading && !breakdownError ? (
+              <CategoryBreakdownChart data={categoryBreakdown} />
+            ) : null}
+          </CardContent>
+        </Card>
 
         <ExpenseLineChart />
       </main>
-
-      <style jsx>{`
-        :global(body) {
-          margin: 0;
-          font-family: "Space Grotesk", "Segoe UI", sans-serif;
-          background: radial-gradient(
-              circle at top left,
-              rgba(255, 244, 214, 0.7),
-              transparent 55%
-            ),
-            radial-gradient(
-              circle at 20% 40%,
-              rgba(205, 232, 255, 0.6),
-              transparent 50%
-            ),
-            #f7f4ef;
-          color: #22252b;
-        }
-
-        .page {
-          min-height: 100vh;
-          padding: 48px clamp(20px, 4vw, 64px) 80px;
-          display: flex;
-          flex-direction: column;
-          gap: 32px;
-        }
-
-        .topbar {
-          display: flex;
-          flex-wrap: wrap;
-          justify-content: space-between;
-          align-items: center;
-          gap: 24px;
-          border: 1px solid rgba(34, 37, 43, 0.08);
-          border-radius: 24px;
-          padding: 24px 28px;
-          background: rgba(255, 255, 255, 0.75);
-          backdrop-filter: blur(12px);
-          box-shadow: 0 18px 40px rgba(20, 24, 36, 0.08);
-        }
-
-        .eyebrow {
-          text-transform: uppercase;
-          letter-spacing: 0.12em;
-          font-size: 12px;
-          margin: 0 0 8px;
-          color: #6b6f78;
-        }
-
-        h1 {
-          margin: 0 0 6px;
-          font-size: clamp(28px, 3vw, 40px);
-        }
-
-        .subtle {
-          margin: 0;
-          color: #666a73;
-        }
-
-        .actions {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 12px;
-          align-items: center;
-        }
-
-        .actions :global(button),
-        .actions :global(a) {
-          border-radius: 999px;
-          border: 1px solid #2e2f33;
-          padding: 10px 18px;
-          font-size: 14px;
-          background: #2e2f33;
-          color: #f7f4ef;
-          text-decoration: none;
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .actions :global(.ghost) {
-          background: transparent;
-          color: #2e2f33;
-        }
-
-        .actions :global(a:hover),
-        .actions :global(button:hover) {
-          transform: translateY(-1px);
-          box-shadow: 0 6px 12px rgba(20, 24, 36, 0.15);
-        }
-
-        .dashboard {
-          display: grid;
-          grid-template-columns: repeat(12, minmax(0, 1fr));
-          gap: 24px;
-        }
-
-        .card {
-          grid-column: span 6;
-          border-radius: 24px;
-          border: 1px solid rgba(34, 37, 43, 0.1);
-          background: rgba(255, 255, 255, 0.82);
-          padding: 24px;
-          box-shadow: 0 16px 30px rgba(20, 24, 36, 0.08);
-        }
-
-        .card.highlight {
-          background: linear-gradient(135deg, #fff2d2, #f5f8ff);
-        }
-
-        .card.span {
-          grid-column: span 12;
-        }
-
-        .card-title {
-          margin: 0 0 12px;
-          font-weight: 600;
-          color: #4b4f57;
-        }
-
-        .metric {
-          font-size: clamp(32px, 4vw, 48px);
-          margin: 0 0 6px;
-        }
-
-        .card-header h2 {
-          margin: 0 0 6px;
-          font-size: 20px;
-        }
-
-        .table {
-          width: 100%;
-          border-collapse: collapse;
-          font-size: 14px;
-        }
-
-        .table th,
-        .table td {
-          padding: 12px 8px;
-          border-bottom: 1px solid rgba(34, 37, 43, 0.08);
-        }
-
-        .caps {
-          text-transform: capitalize;
-        }
-
-        .amount {
-          font-variant-numeric: tabular-nums;
-        }
-
-        .amount.up {
-          color: #1f7a4d;
-        }
-
-        .amount.down {
-          color: #b23a3a;
-        }
-
-        .error {
-          color: #b23a3a;
-        }
-
-        .budget-rules {
-          display: grid;
-          gap: 16px;
-        }
-
-        .budget-rule {
-          border-radius: 18px;
-          border: 1px solid rgba(34, 37, 43, 0.08);
-          background: rgba(255, 255, 255, 0.7);
-          padding: 16px 18px;
-        }
-
-        .budget-rule-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-        }
-
-        .budget-name {
-          margin: 0;
-          font-weight: 600;
-          color: #2d3138;
-        }
-
-        .budget-meta {
-          margin: 4px 0 0;
-          font-size: 13px;
-          color: #6b6f78;
-        }
-
-        .status-badge {
-          padding: 6px 12px;
-          border-radius: 999px;
-          font-size: 12px;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-        }
-
-        .status-badge.success {
-          background: rgba(31, 122, 77, 0.12);
-          color: #1f7a4d;
-          border: 1px solid rgba(31, 122, 77, 0.25);
-        }
-
-        .status-badge.warning {
-          background: rgba(196, 132, 26, 0.15);
-          color: #9a5c07;
-          border: 1px solid rgba(196, 132, 26, 0.3);
-        }
-
-        .status-badge.danger {
-          background: rgba(178, 58, 58, 0.12);
-          color: #b23a3a;
-          border: 1px solid rgba(178, 58, 58, 0.3);
-        }
-
-        .progress {
-          position: relative;
-          margin-top: 12px;
-          height: 10px;
-          border-radius: 999px;
-          background: rgba(34, 37, 43, 0.08);
-          overflow: hidden;
-        }
-
-        .progress-fill {
-          display: block;
-          height: 100%;
-          border-radius: 999px;
-          background: #1f7a4d;
-        }
-
-        .progress-fill.warning {
-          background: #c4841a;
-        }
-
-        .progress-fill.danger {
-          background: #b23a3a;
-        }
-
-        @media (max-width: 900px) {
-          .card {
-            grid-column: span 12;
-          }
-
-          .actions {
-            width: 100%;
-          }
-        }
-      `}</style>
     </div>
   );
 }

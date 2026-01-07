@@ -3,6 +3,16 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import CategoryManagerModal from "../components/CategoryManagerModal";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "../components/ui/table";
 
 const ruleTypeOptions = [
   { value: "category_cap", label: "Category cap" },
@@ -283,172 +293,202 @@ export default function BudgetClient() {
   };
 
   return (
-    <div style={{ maxWidth: "860px", margin: "40px auto", padding: "0 16px" }}>
-      <Link href="/" style={{ display: "inline-block", marginBottom: "16px" }}>
-        ← Back to dashboard
-      </Link>
-      <h1>Budget settings</h1>
-      <p>Define guardrails for category and account spending.</p>
+    <div className="mx-auto max-w-4xl px-4 py-10">
+      <Button asChild variant="outline">
+        <Link href="/">← Back to dashboard</Link>
+      </Button>
+      <h1 className="mt-4 text-3xl font-semibold text-slate-900">
+        Budget settings
+      </h1>
+      <p className="mt-2 text-sm text-slate-500">
+        Define guardrails for category and account spending.
+      </p>
 
-      <section style={{ marginBottom: "32px" }}>
-        <h2>{editingId ? "Edit rule" : "Create rule"}</h2>
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "12px" }}>
-          <label>
-            Rule type
-            <select
-              name="rule_type"
-              value={form.rule_type}
-              onChange={handleChange}
-            >
-              {ruleTypeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Amount
-            <input
-              name="amount"
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={form.amount}
-              onChange={handleChange}
-              required
-            />
-          </label>
-          {form.rule_type === "category_cap" ? (
-            <label>
-              Category
-              <div
-                style={{
-                  display: "flex",
-                  gap: "8px",
-                  flexWrap: "wrap",
-                  alignItems: "center"
-                }}
-              >
+      <div className="mt-8 grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>{editingId ? "Edit rule" : "Create rule"}</CardTitle>
+            <CardDescription>Set guardrails for ongoing spending.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="grid gap-4">
+              <label className="text-sm text-slate-600">
+                Rule type
                 <select
-                  name="category"
-                  value={form.category}
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="rule_type"
+                  value={form.rule_type}
                   onChange={handleChange}
-                  disabled={categoriesLoading}
                 >
-                  {categories.length === 0 ? (
-                    <option value="">No categories available</option>
-                  ) : null}
-                  {categories.map((category) => (
-                    <option key={category.id} value={category.name}>
-                      {category.name}
+                  {ruleTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
                     </option>
                   ))}
-                  {form.category &&
-                  !categories.some(
-                    (category) => category.name === form.category
-                  ) ? (
-                    <option value={form.category}>{form.category}</option>
-                  ) : null}
                 </select>
-                <button
-                  type="button"
-                  onClick={() => setShowCategoryModal(true)}
-                >
-                  Add/manage categories
-                </button>
-              </div>
-            </label>
-          ) : null}
-          {form.rule_type === "account_cap" ? (
-            <label>
-              Account
-              <select
-                name="account_id"
-                value={form.account_id}
-                onChange={handleChange}
-                disabled={accounts.length === 0}
-                required
-              >
-                {accounts.length === 0 ? (
-                  <option value="">No accounts available</option>
-                ) : (
-                  accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
-          ) : null}
-          {categoriesError ? (
-            <p style={{ color: "crimson" }}>{categoriesError}</p>
-          ) : null}
-          {error ? <p style={{ color: "crimson" }}>{error}</p> : null}
-          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-            <button type="submit" disabled={saving || loading}>
-              {editingId ? "Save changes" : "Add rule"}
-            </button>
-            {editingId ? (
-              <button type="button" onClick={handleCancel} disabled={saving}>
-                Cancel
-              </button>
-            ) : null}
-          </div>
-        </form>
-      </section>
-
-      <section>
-        <h2>Existing rules</h2>
-        {rulesLoading ? <p>Loading rules...</p> : null}
-        {rulesError ? <p style={{ color: "crimson" }}>{rulesError}</p> : null}
-        {!rulesLoading && rules.length === 0 ? <p>No rules yet.</p> : null}
-        {rules.length > 0 ? (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th align="left">Rule</th>
-                <th align="left">Amount</th>
-                <th align="left">Target</th>
-                <th align="left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rules.map((rule) => (
-                <tr key={rule.id}>
-                  <td>
-                    {
-                      ruleTypeOptions.find(
-                        (option) => option.value === rule.rule_type
-                      )?.label
-                    }
-                  </td>
-                  <td>{currencyFormatter.format(rule.amount)}</td>
-                  <td>
-                    {rule.rule_type === "category_cap"
-                      ? rule.category || "-"
-                      : rule.rule_type === "account_cap"
-                      ? accountLookup[rule.account_id] || "-"
-                      : "Net savings"}
-                  </td>
-                  <td>
-                    <button type="button" onClick={() => handleEdit(rule)}>
-                      Edit
-                    </button>{" "}
+              </label>
+              <label className="text-sm text-slate-600">
+                Amount
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="amount"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={form.amount}
+                  onChange={handleChange}
+                  required
+                />
+              </label>
+              {form.rule_type === "category_cap" ? (
+                <label className="text-sm text-slate-600">
+                  Category
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <select
+                      className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                      name="category"
+                      value={form.category}
+                      onChange={handleChange}
+                      disabled={categoriesLoading}
+                    >
+                      {categories.length === 0 ? (
+                        <option value="">No categories available</option>
+                      ) : null}
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.name}>
+                          {category.name}
+                        </option>
+                      ))}
+                      {form.category &&
+                      !categories.some(
+                        (category) => category.name === form.category
+                      ) ? (
+                        <option value={form.category}>{form.category}</option>
+                      ) : null}
+                    </select>
                     <button
                       type="button"
-                      onClick={() => handleDelete(rule.id)}
+                      onClick={() => setShowCategoryModal(true)}
+                      className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                     >
-                      Delete
+                      Add/manage categories
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : null}
-      </section>
+                  </div>
+                </label>
+              ) : null}
+              {form.rule_type === "account_cap" ? (
+                <label className="text-sm text-slate-600">
+                  Account
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="account_id"
+                    value={form.account_id}
+                    onChange={handleChange}
+                    disabled={accounts.length === 0}
+                    required
+                  >
+                    {accounts.length === 0 ? (
+                      <option value="">No accounts available</option>
+                    ) : (
+                      accounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </label>
+              ) : null}
+              {categoriesError ? (
+                <p className="text-sm text-rose-600">{categoriesError}</p>
+              ) : null}
+              {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  disabled={saving || loading}
+                  className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {editingId ? "Save changes" : "Add rule"}
+                </button>
+                {editingId ? (
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    disabled={saving}
+                    className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                ) : null}
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Existing rules</CardTitle>
+            <CardDescription>Review the budgets you have set.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {rulesLoading ? <p>Loading rules...</p> : null}
+            {rulesError ? <p className="text-sm text-rose-600">{rulesError}</p> : null}
+            {!rulesLoading && rules.length === 0 ? <p>No rules yet.</p> : null}
+            {rules.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Rule</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Target</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rules.map((rule) => (
+                    <TableRow key={rule.id}>
+                      <TableCell>
+                        {
+                          ruleTypeOptions.find(
+                            (option) => option.value === rule.rule_type
+                          )?.label
+                        }
+                      </TableCell>
+                      <TableCell>
+                        {currencyFormatter.format(rule.amount)}
+                      </TableCell>
+                      <TableCell>
+                        {rule.rule_type === "category_cap"
+                          ? rule.category || "-"
+                          : rule.rule_type === "account_cap"
+                          ? accountLookup[rule.account_id] || "-"
+                          : "Net savings"}
+                      </TableCell>
+                      <TableCell className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleEdit(rule)}
+                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(rule.id)}
+                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                        >
+                          Delete
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : null}
+          </CardContent>
+        </Card>
+      </div>
       {showCategoryModal ? (
         <CategoryManagerModal
           categories={categories}

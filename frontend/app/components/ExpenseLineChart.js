@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -273,215 +274,117 @@ export default function ExpenseLineChart({
     ? "No accounts yet."
     : "No expense activity yet.";
 
+  const selectClass =
+    "mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10";
+
   return (
-    <section className="card">
-      <div className="chart-layout">
-        <div className="chart-meta">
-          <div className="card-header chart-header">
-            <div>
-              <h2>{title}</h2>
-              <p className="subtle">{subtitle}</p>
-            </div>
-          </div>
-          <div className="selectors">
-            <label className="selector">
-              <span className="selector-label">Account</span>
-              <select
-                value={selectedAccountId}
-                onChange={(event) => setSelectedAccountId(event.target.value)}
-                disabled={!accounts.length}
-              >
-                {accounts.length === 0 ? (
-                  <option value="">No accounts</option>
-                ) : (
-                  accounts.map((account) => (
-                    <option
-                      key={account.id}
-                      value={normalizeId(account.id)}
-                    >
-                      {account.name || "Unnamed account"}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
-            <label className="selector">
-              <span className="selector-label">Resolution</span>
-              <select
-                value={resolution}
-                onChange={(event) => setResolution(event.target.value)}
-              >
-                {RESOLUTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        </div>
-
-        <div className="chart-area">
-          {listLoading || chartLoading ? (
-            <p>Loading transactions...</p>
-          ) : null}
-          {error ? <p className="error">{error}</p> : null}
-          {!listLoading && !chartLoading && !error && series.length === 0 ? (
-            <p className="chart-empty">{emptyMessage}</p>
-          ) : null}
-
-          {!listLoading && !chartLoading && !error && series.length > 0 ? (
-            <div className="chart">
-              <ResponsiveContainer width="100%" height={320}>
-                <LineChart
-                  data={series}
-                  margin={{ top: 20, right: 24, bottom: 36, left: 8 }}
+    <Card className="lg:col-span-12">
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        <CardDescription>{subtitle}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-col gap-6 lg:flex-row">
+          <div className="w-full lg:w-72">
+            <div className="grid gap-4">
+              <label className="text-xs uppercase tracking-[0.12em] text-slate-500">
+                Account
+                <select
+                  className={selectClass}
+                  value={selectedAccountId}
+                  onChange={(event) => setSelectedAccountId(event.target.value)}
+                  disabled={!accounts.length}
                 >
-                  <CartesianGrid stroke="rgba(34, 37, 43, 0.08)" vertical={false} />
-                  <XAxis
-                    dataKey="label"
-                    interval={tickInterval}
-                    tick={{ fontSize: 10, fill: "#6b6f78" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tickFormatter={(value) => currencyFormatter.format(value)}
-                    width={72}
-                    domain={[0, "dataMax"]}
-                    tick={{ fontSize: 11, fill: "#6b6f78" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    content={({ active, payload, label }) => {
-                      if (!active || !payload?.length) return null;
-                      const value = payload[0]?.value ?? 0;
-                      return (
-                        <div className="tooltip">
-                          <p className="tooltip-title">{label}</p>
-                          <p>{currencyFormatter.format(value)}</p>
-                        </div>
-                      );
-                    }}
-                    cursor={{ stroke: "rgba(46, 47, 51, 0.2)" }}
-                    wrapperStyle={{ outline: "none" }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="total"
-                    stroke="#2e2f33"
-                    strokeWidth={2}
-                    dot={{ r: 3, fill: "#2e2f33" }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+                  {accounts.length === 0 ? (
+                    <option value="">No accounts</option>
+                  ) : (
+                    accounts.map((account) => (
+                      <option key={account.id} value={normalizeId(account.id)}>
+                        {account.name || "Unnamed account"}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              <label className="text-xs uppercase tracking-[0.12em] text-slate-500">
+                Resolution
+                <select
+                  className={selectClass}
+                  value={resolution}
+                  onChange={(event) => setResolution(event.target.value)}
+                >
+                  {RESOLUTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-          ) : null}
+          </div>
+
+          <div className="flex min-h-[260px] flex-1 items-center">
+            {listLoading || chartLoading ? (
+              <p>Loading transactions...</p>
+            ) : null}
+            {error ? <p className="text-rose-600">{error}</p> : null}
+            {!listLoading && !chartLoading && !error && series.length === 0 ? (
+              <p className="text-sm text-slate-500">{emptyMessage}</p>
+            ) : null}
+
+            {!listLoading && !chartLoading && !error && series.length > 0 ? (
+              <div className="h-[320px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={series}
+                    margin={{ top: 20, right: 24, bottom: 36, left: 8 }}
+                  >
+                    <CartesianGrid stroke="rgba(34, 37, 43, 0.08)" vertical={false} />
+                    <XAxis
+                      dataKey="label"
+                      interval={tickInterval}
+                      tick={{ fontSize: 10, fill: "#6b6f78" }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tickFormatter={(value) => currencyFormatter.format(value)}
+                      width={72}
+                      domain={[0, "dataMax"]}
+                      tick={{ fontSize: 11, fill: "#6b6f78" }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      content={({ active, payload, label }) => {
+                        if (!active || !payload?.length) return null;
+                        const value = payload[0]?.value ?? 0;
+                        return (
+                          <div className="rounded-lg border border-slate-200 bg-white/95 p-2 text-xs text-slate-700 shadow-lg">
+                            <p className="mb-1 text-xs font-semibold text-slate-900">
+                              {label}
+                            </p>
+                            <p>{currencyFormatter.format(value)}</p>
+                          </div>
+                        );
+                      }}
+                      cursor={{ stroke: "rgba(46, 47, 51, 0.2)" }}
+                      wrapperStyle={{ outline: "none" }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="total"
+                      stroke="#2e2f33"
+                      strokeWidth={2}
+                      dot={{ r: 3, fill: "#2e2f33" }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : null}
+          </div>
         </div>
-      </div>
-
-      <style jsx>{`
-        .chart-layout {
-          display: flex;
-          gap: 24px;
-          align-items: stretch;
-        }
-
-        .chart-meta {
-          flex: 0 0 280px;
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-        }
-
-        .chart-area {
-          flex: 1;
-          min-width: 320px;
-          display: flex;
-          align-items: center;
-        }
-
-        .chart {
-          width: 100%;
-        }
-
-        .selectors {
-          display: flex;
-          gap: 12px;
-          flex-direction: column;
-        }
-
-        .selector {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-          font-size: 12px;
-          color: #6b6f78;
-        }
-
-        .selector select {
-          border: 1px solid rgba(34, 37, 43, 0.2);
-          border-radius: 12px;
-          padding: 6px 10px;
-          font-size: 13px;
-          background: #fff;
-          color: #2e2f33;
-        }
-
-        .selector-label {
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-          font-size: 10px;
-          color: #7b808a;
-        }
-
-        .tooltip {
-          background: rgba(255, 255, 255, 0.95);
-          border: 1px solid rgba(34, 37, 43, 0.1);
-          border-radius: 12px;
-          padding: 10px 12px;
-          font-size: 12px;
-          color: #2d3138;
-          box-shadow: 0 10px 20px rgba(20, 24, 36, 0.12);
-          min-width: 140px;
-        }
-
-        .tooltip-title {
-          margin: 0 0 6px;
-          font-weight: 600;
-          color: #2e2f33;
-        }
-
-        .tooltip p {
-          margin: 0;
-          line-height: 1.4;
-        }
-
-        .chart-empty {
-          margin: 0;
-          color: #666a73;
-        }
-
-        @media (max-width: 900px) {
-          .chart-layout {
-            flex-direction: column;
-          }
-
-          .chart-meta {
-            flex: 1 1 auto;
-          }
-
-          .selectors {
-            flex-direction: row;
-            flex-wrap: wrap;
-          }
-        }
-
-        :global(.recharts-cartesian-axis-tick text) {
-          font-family: inherit;
-        }
-      `}</style>
-    </section>
+      </CardContent>
+    </Card>
   );
 }

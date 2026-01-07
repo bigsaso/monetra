@@ -4,6 +4,16 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import CategoryManagerModal from "../components/CategoryManagerModal";
 import CsvImportPreviewModal from "../components/CsvImportPreviewModal";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "../components/ui/table";
 
 const buildEmptyForm = (dateValue) => ({
   account_id: "",
@@ -256,6 +266,7 @@ export default function TransactionsClient() {
   const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [addSuccess, setAddSuccess] = useState("");
   const [categoriesError, setCategoriesError] = useState("");
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [importRows, setImportRows] = useState([]);
@@ -264,6 +275,7 @@ export default function TransactionsClient() {
   const [importSuccess, setImportSuccess] = useState("");
   const [importSaving, setImportSaving] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [importAccountId, setImportAccountId] = useState("");
   const [bulkCategory, setBulkCategory] = useState("");
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
@@ -350,6 +362,20 @@ export default function TransactionsClient() {
   }, []);
 
   useEffect(() => {
+    if (!importAccountId && accounts.length > 0) {
+      setImportAccountId(String(accounts[0].id));
+    }
+  }, [accounts, importAccountId]);
+
+  useEffect(() => {
+    if (!addSuccess) return undefined;
+    const timeoutId = setTimeout(() => {
+      setAddSuccess("");
+    }, 4000);
+    return () => clearTimeout(timeoutId);
+  }, [addSuccess]);
+
+  useEffect(() => {
     if (accounts.length > 0 && !form.account_id) {
       setForm((prev) => ({ ...prev, account_id: String(accounts[0].id) }));
     }
@@ -357,6 +383,7 @@ export default function TransactionsClient() {
 
   const handleChange = (event) => {
     const { name, value } = event.target;
+    setAddSuccess("");
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
@@ -368,6 +395,7 @@ export default function TransactionsClient() {
     }
     setSaving(true);
     setError("");
+    setAddSuccess("");
     try {
       const payload = {
         account_id: Number(form.account_id),
@@ -391,6 +419,9 @@ export default function TransactionsClient() {
       }
       setEditingId(null);
       await loadData();
+      if (!editingId) {
+        setAddSuccess("Transaction added.");
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -407,6 +438,7 @@ export default function TransactionsClient() {
 
   const handleEdit = (transaction) => {
     setEditingId(transaction.id);
+    setAddSuccess("");
     setForm({
       account_id: String(transaction.account_id),
       amount: String(transaction.amount),
@@ -419,6 +451,7 @@ export default function TransactionsClient() {
 
   const handleCancel = () => {
     setEditingId(null);
+    setAddSuccess("");
     setForm(buildEmptyForm(today));
   };
 
@@ -538,7 +571,7 @@ export default function TransactionsClient() {
   };
 
   const handleCommitImport = async () => {
-    if (!form.account_id) {
+    if (!importAccountId) {
       setImportCommitError("Select an account before importing.");
       return;
     }
@@ -580,7 +613,7 @@ export default function TransactionsClient() {
     setImportCommitError("");
     try {
       const payload = {
-        account_id: Number(form.account_id),
+        account_id: Number(importAccountId),
         transactions: normalizedTransactions
       };
       const response = await fetch("/api/transactions/import/commit", {
@@ -604,32 +637,44 @@ export default function TransactionsClient() {
     }
   };
 
-  return (
-    <div style={{ maxWidth: "860px", margin: "40px auto", padding: "0 16px" }}>
-      <Link href="/" style={{ display: "inline-block", marginBottom: "16px" }}>
-        ← Back to dashboard
-      </Link>
-      <h1>Transactions</h1>
-      <p>Log income and expenses linked to your accounts.</p>
+  const inputClass =
+    "mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10";
+  const compactSelectClass =
+    "ml-2 rounded-md border border-slate-200 bg-white px-2 py-1 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10";
+  const buttonClass =
+    "rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60";
+  const ghostButtonClass =
+    "rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60";
 
-      <div
-        style={{
-          display: "flex",
-          gap: "32px",
-          flexWrap: "wrap",
-          alignItems: "flex-start",
-          marginBottom: "32px"
-        }}
-      >
-        <section style={{ flex: "2 1 420px" }}>
-          <h2>{editingId ? "Edit transaction" : "Add transaction"}</h2>
+  return (
+    <div className="mx-auto max-w-4xl px-4 py-10">
+      <Button asChild variant="outline">
+        <Link href="/">← Back to dashboard</Link>
+      </Button>
+      <h1 className="mt-4 text-3xl font-semibold text-slate-900">Transactions</h1>
+      <p className="mt-2 text-sm text-slate-500">
+        Log income and expenses linked to your accounts.
+      </p>
+
+      <div className="mt-8 flex flex-wrap items-start gap-8">
+        <Card className="flex-[2_1_420px]">
+          <CardHeader>
+            <CardTitle>{editingId ? "Edit transaction" : "Add transaction"}</CardTitle>
+            <CardDescription>
+              Capture a new income or expense linked to your accounts.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
           {accounts.length === 0 ? (
-            <p>Set up an account before adding transactions.</p>
+            <p className="text-sm text-slate-500">
+              Set up an account before adding transactions.
+            </p>
           ) : null}
-          <form onSubmit={handleSubmit} style={{ display: "grid", gap: "12px" }}>
-            <label>
+          <form onSubmit={handleSubmit} className="mt-4 grid gap-4">
+            <label className="text-sm text-slate-600">
               Account
               <select
+                className={inputClass}
                 name="account_id"
                 value={form.account_id}
                 onChange={handleChange}
@@ -647,17 +692,23 @@ export default function TransactionsClient() {
                 )}
               </select>
             </label>
-            <label>
+            <label className="text-sm text-slate-600">
               Type
-              <select name="type" value={form.type} onChange={handleChange}>
+              <select
+                className={inputClass}
+                name="type"
+                value={form.type}
+                onChange={handleChange}
+              >
                 <option value="income">Income</option>
                 <option value="expense">Expense</option>
                 <option value="investment">Investment</option>
               </select>
             </label>
-            <label>
+            <label className="text-sm text-slate-600">
               Amount
               <input
+                className={inputClass}
                 name="amount"
                 type="number"
                 step="0.01"
@@ -667,17 +718,11 @@ export default function TransactionsClient() {
                 required
               />
             </label>
-            <label>
+            <label className="text-sm text-slate-600">
               Category
-              <div
-                style={{
-                  display: "flex",
-                  gap: "8px",
-                  flexWrap: "wrap",
-                  alignItems: "center"
-                }}
-              >
+              <div className="mt-2 flex flex-wrap items-center gap-2">
                 <select
+                  className={inputClass}
                   name="category"
                   value={form.category}
                   onChange={handleChange}
@@ -699,17 +744,19 @@ export default function TransactionsClient() {
                 <button
                   type="button"
                   onClick={() => setShowCategoryModal(true)}
+                  className={ghostButtonClass}
                 >
                   Add/manage categories
                 </button>
               </div>
             </label>
             {categoriesError ? (
-              <p style={{ color: "crimson" }}>{categoriesError}</p>
+              <p className="text-sm text-rose-600">{categoriesError}</p>
             ) : null}
-            <label>
+            <label className="text-sm text-slate-600">
               Date
               <input
+                className={inputClass}
                 name="date"
                 type="date"
                 value={form.date}
@@ -717,54 +764,80 @@ export default function TransactionsClient() {
                 required
               />
             </label>
-            <label>
+            <label className="text-sm text-slate-600">
               Notes
               <input
+                className={inputClass}
                 name="notes"
                 value={form.notes}
                 onChange={handleChange}
                 placeholder="Optional"
               />
             </label>
-            <button type="submit" disabled={saving || accounts.length === 0}>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                className={buttonClass}
+                disabled={saving || accounts.length === 0}
+              >
               {editingId ? "Save changes" : "Add transaction"}
-            </button>
-            {editingId ? (
-              <button type="button" onClick={handleCancel} disabled={saving}>
-                Cancel
               </button>
+              {editingId ? (
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className={ghostButtonClass}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+            {addSuccess ? (
+              <p className="text-sm text-emerald-600">{addSuccess}</p>
             ) : null}
           </form>
-        </section>
+          </CardContent>
+        </Card>
 
-        <section style={{ flex: "1 1 260px" }}>
-          <h2>Import expenses</h2>
-          <p>Upload a CSV to preview expenses before saving.</p>
-          <input type="file" accept=".csv,text/csv" onChange={handleCsvUpload} />
-          {importError ? (
-            <p style={{ color: "crimson" }}>{importError}</p>
-          ) : null}
-          {importSuccess ? (
-            <p style={{ color: "seagreen" }}>{importSuccess}</p>
-          ) : null}
-        </section>
+        <Card className="flex-[1_1_260px]">
+          <CardHeader>
+            <CardTitle>Import expenses</CardTitle>
+            <CardDescription>
+              Upload a CSV to preview expenses before saving.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={handleCsvUpload}
+              className="block w-full text-sm text-slate-600 file:mr-4 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white"
+            />
+            {importError ? (
+              <p className="text-sm text-rose-600">{importError}</p>
+            ) : null}
+            {importSuccess ? (
+              <p className="text-sm text-emerald-600">{importSuccess}</p>
+            ) : null}
+          </CardContent>
+        </Card>
       </div>
 
-      <section>
-        <h2>Recent transactions</h2>
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent transactions</CardTitle>
+          <CardDescription>
+            Track the latest activity across your accounts.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
         {!loading && transactions.length > 0 ? (
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              alignItems: "center",
-              gap: "12px",
-              marginBottom: "12px"
-            }}
-          >
+          <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-slate-600">
             <label>
-              Rows per page{" "}
+              Rows per page
               <select
+                className={compactSelectClass}
                 value={rowsPerPage}
                 onChange={(event) => {
                   setRowsPerPage(Number(event.target.value));
@@ -778,13 +851,14 @@ export default function TransactionsClient() {
                 ))}
               </select>
             </label>
-            <span>
+            <span className="text-slate-500">
               Page {currentPage} of {totalPages}
             </span>
             <button
               type="button"
               onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
               disabled={currentPage <= 1}
+              className={ghostButtonClass}
             >
               Previous
             </button>
@@ -794,63 +868,71 @@ export default function TransactionsClient() {
                 setCurrentPage((prev) => Math.min(totalPages, prev + 1))
               }
               disabled={currentPage >= totalPages}
+              className={ghostButtonClass}
             >
               Next
             </button>
           </div>
         ) : null}
         {loading ? <p>Loading transactions...</p> : null}
-        {error ? <p style={{ color: "crimson" }}>{error}</p> : null}
+        {error ? <p className="text-sm text-rose-600">{error}</p> : null}
         {!loading && transactions.length === 0 ? (
           <p>No transactions yet.</p>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th align="left">Date</th>
-                <th align="left">Account</th>
-                <th align="left">Type</th>
-                <th align="left">Category</th>
-                <th align="right">Amount</th>
-                <th align="left">Notes</th>
-                <th align="left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead>Account</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead>Notes</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {pagedTransactions.map((transaction) => (
-                <tr key={transaction.id}>
-                  <td>{transaction.date}</td>
-                  <td>{accountLookup[transaction.account_id] || "-"}</td>
-                  <td style={{ textTransform: "capitalize" }}>
+                <TableRow key={transaction.id}>
+                  <TableCell>{transaction.date}</TableCell>
+                  <TableCell>{accountLookup[transaction.account_id] || "-"}</TableCell>
+                  <TableCell className="capitalize">
                     {transaction.type}
-                  </td>
-                  <td>{transaction.category || "-"}</td>
-                  <td align="right">
+                  </TableCell>
+                  <TableCell>{transaction.category || "-"}</TableCell>
+                  <TableCell className="text-right font-medium">
                     {formatAmountSign(transaction.type)}
                     {currencyFormatter.format(Number(transaction.amount || 0))}
-                  </td>
-                  <td>{transaction.notes || "-"}</td>
-                  <td>
-                    <button type="button" onClick={() => handleEdit(transaction)}>
+                  </TableCell>
+                  <TableCell>{transaction.notes || "-"}</TableCell>
+                  <TableCell className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleEdit(transaction)}
+                      className={ghostButtonClass}
+                    >
                       Edit
-                    </button>{" "}
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleDelete(transaction.id)}
                       disabled={saving}
+                      className={ghostButtonClass}
                     >
                       Delete
                     </button>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
-      </section>
+        </CardContent>
+      </Card>
       {showImportModal ? (
         <CsvImportPreviewModal
           rows={importRows}
+          accounts={accounts}
           categories={categories}
           bulkCategory={bulkCategory}
           onBulkCategoryChange={setBulkCategory}
@@ -860,10 +942,12 @@ export default function TransactionsClient() {
           onConfirm={handleCommitImport}
           isImporting={importSaving}
           importError={importCommitError}
-          hasAccount={Boolean(form.account_id)}
+          hasAccount={Boolean(importAccountId)}
           accountName={
-            form.account_id ? accountLookup[Number(form.account_id)] : ""
+            importAccountId ? accountLookup[Number(importAccountId)] : ""
           }
+          selectedAccountId={importAccountId}
+          onAccountChange={setImportAccountId}
         />
       ) : null}
       {showCategoryModal ? (

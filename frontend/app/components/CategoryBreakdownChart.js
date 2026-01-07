@@ -44,10 +44,15 @@ export default function CategoryBreakdownChart({ data }) {
     const { cx, cy } = viewBox;
     return (
       <>
-        <text x={cx} y={cy - 4} textAnchor="middle" className="total-label">
+        <text x={cx} y={cy - 4} textAnchor="middle" className="fill-slate-500 text-xs">
           Total
         </text>
-        <text x={cx} y={cy + 18} textAnchor="middle" className="total-value">
+        <text
+          x={cx}
+          y={cy + 18}
+          textAnchor="middle"
+          className="fill-slate-900 text-sm font-semibold"
+        >
           {formatAmount(totalSpent)}
         </text>
       </>
@@ -56,24 +61,26 @@ export default function CategoryBreakdownChart({ data }) {
 
   const CustomTooltip = ({ active, payload }) => {
     if (!active || !payload?.length) return null;
-    const data = payload[0]?.payload;
-    if (!data) return null;
+    const chartEntry = payload[0]?.payload;
+    if (!chartEntry) return null;
     return (
-      <div className="tooltip">
-        <p className="tooltip-title">{data.category}</p>
-        <p>{formatAmount(data.totalSpent)}</p>
+      <div className="rounded-lg border border-slate-200 bg-white/95 p-2 text-xs text-slate-700 shadow-lg">
+        <p className="mb-1 text-xs font-semibold text-slate-900">
+          {chartEntry.category}
+        </p>
+        <p>{formatAmount(chartEntry.totalSpent)}</p>
       </div>
     );
   };
 
   if (!chartData.length || totalSpent <= 0) {
-    return <p className="chart-empty">No expense data yet.</p>;
+    return <p className="text-sm text-slate-500">No expense data yet.</p>;
   }
 
   return (
-    <div className="breakdown">
-      <div className="chart-row">
-        <div className="donut" role="img" aria-label="Expense breakdown">
+    <div className="space-y-4">
+      <div className="grid items-center gap-6 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]">
+        <div className="w-full min-w-[220px]" role="img" aria-label="Expense breakdown">
           <ResponsiveContainer width="100%" height={240}>
             <PieChart>
               <Pie
@@ -96,119 +103,23 @@ export default function CategoryBreakdownChart({ data }) {
           </ResponsiveContainer>
         </div>
 
-        <div className="legend">
+        <div className="grid gap-3">
           {chartData.map((item, index) => (
             <div
               key={`${item.category}-${index}`}
-              className="legend-row"
+              className="grid grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-3 text-sm text-slate-700"
               tabIndex={0}
               role="button"
             >
-              <span className="swatch" style={{ background: item.color }} />
-              <span className="label">{item.category}</span>
-              <span className="percent">{formatPercentage(item.percentage)}</span>
+              <span className="h-3 w-3 rounded-full" style={{ background: item.color }} />
+              <span className="truncate">{item.category}</span>
+              <span className="text-xs text-slate-500">
+                {formatPercentage(item.percentage)}
+              </span>
             </div>
           ))}
         </div>
       </div>
-
-      <style jsx>{`
-        .breakdown {
-          position: relative;
-        }
-
-        .chart-row {
-          display: grid;
-          grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-          gap: 24px;
-          align-items: center;
-        }
-
-        .donut {
-          width: 100%;
-          min-width: 220px;
-        }
-
-        .total-label {
-          font-size: 12px;
-          fill: #6b6f78;
-        }
-
-        .total-value {
-          font-size: 16px;
-          font-weight: 600;
-          fill: #2e2f33;
-        }
-
-        .legend {
-          display: grid;
-          gap: 12px;
-        }
-
-        .legend-row {
-          display: grid;
-          grid-template-columns: 14px minmax(0, 1fr) auto;
-          align-items: center;
-          gap: 10px;
-          font-size: 13px;
-          color: #2d3138;
-          outline: none;
-        }
-
-        .swatch {
-          width: 12px;
-          height: 12px;
-          border-radius: 999px;
-        }
-
-        .label {
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        .percent {
-          font-variant-numeric: tabular-nums;
-          color: #6b6f78;
-        }
-
-        .tooltip {
-          background: rgba(255, 255, 255, 0.95);
-          border: 1px solid rgba(34, 37, 43, 0.1);
-          border-radius: 12px;
-          padding: 10px 12px;
-          font-size: 12px;
-          color: #2d3138;
-          box-shadow: 0 10px 20px rgba(20, 24, 36, 0.12);
-          min-width: 140px;
-        }
-
-        .tooltip-title {
-          margin: 0 0 6px;
-          font-weight: 600;
-          color: #2e2f33;
-        }
-
-        .tooltip p {
-          margin: 0;
-          line-height: 1.4;
-        }
-
-        .chart-empty {
-          margin: 0;
-          color: #666a73;
-        }
-
-        @media (max-width: 700px) {
-          .chart-row {
-            grid-template-columns: 1fr;
-          }
-        }
-
-        :global(.recharts-tooltip-wrapper) {
-          outline: none;
-        }
-      `}</style>
     </div>
   );
 }

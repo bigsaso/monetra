@@ -2,6 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "../components/ui/table";
 
 const emptyForm = { name: "", type: "checking", institution: "" };
 
@@ -104,96 +114,133 @@ export default function AccountsClient() {
   };
 
   return (
-    <div style={{ maxWidth: "720px", margin: "40px auto", padding: "0 16px" }}>
-      <Link href="/" style={{ display: "inline-block", marginBottom: "16px" }}>
-        ← Back to dashboard
-      </Link>
-      <h1>Financial Accounts</h1>
-      <p>Track the accounts you use for spending and investing.</p>
+    <div className="mx-auto max-w-3xl px-4 py-10">
+      <Button asChild variant="outline">
+        <Link href="/">← Back to dashboard</Link>
+      </Button>
+      <h1 className="mt-4 text-3xl font-semibold text-slate-900">
+        Financial Accounts
+      </h1>
+      <p className="mt-2 text-sm text-slate-500">
+        Track the accounts you use for spending and investing.
+      </p>
 
-      <section style={{ marginBottom: "32px" }}>
-        <h2>{editingId ? "Edit account" : "Add account"}</h2>
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "12px" }}>
-          <label>
+      <div className="mt-8 grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>{editingId ? "Edit account" : "Add account"}</CardTitle>
+            <CardDescription>Keep your funding sources up to date.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="grid gap-4">
+              <label className="text-sm text-slate-600">
             Name
             <input
+              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               name="name"
               value={form.name}
               onChange={handleChange}
               required
             />
           </label>
-          <label>
+              <label className="text-sm text-slate-600">
             Type
-            <select name="type" value={form.type} onChange={handleChange}>
+            <select
+              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              name="type"
+              value={form.type}
+              onChange={handleChange}
+            >
               <option value="checking">Checking</option>
               <option value="savings">Savings</option>
               <option value="credit">Credit</option>
               <option value="investment">Investment</option>
             </select>
           </label>
-          <label>
+              <label className="text-sm text-slate-600">
             Institution
             <input
+              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               name="institution"
               value={form.institution}
               onChange={handleChange}
               placeholder="Optional"
             />
           </label>
-          <div style={{ display: "flex", gap: "12px" }}>
-            <button type="submit" disabled={saving}>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                >
               {editingId ? "Save changes" : "Add account"}
             </button>
             {editingId ? (
-              <button type="button" onClick={handleCancel} disabled={saving}>
+              <button
+                type="button"
+                onClick={handleCancel}
+                disabled={saving}
+                className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+              >
                 Cancel
               </button>
             ) : null}
-          </div>
-        </form>
-      </section>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
 
-      <section>
-        <h2>Your accounts</h2>
-        {loading ? <p>Loading accounts...</p> : null}
-        {error ? <p style={{ color: "crimson" }}>{error}</p> : null}
-        {!loading && accounts.length === 0 ? (
-          <p>No accounts yet.</p>
-        ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th align="left">Name</th>
-                <th align="left">Type</th>
-                <th align="left">Institution</th>
-                <th align="left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {accounts.map((account) => (
-                <tr key={account.id}>
-                  <td>{account.name}</td>
-                  <td style={{ textTransform: "capitalize" }}>{account.type}</td>
-                  <td>{account.institution || "-"}</td>
-                  <td>
-                    <button type="button" onClick={() => handleEdit(account)}>
-                      Edit
-                    </button>{" "}
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(account.id)}
-                      disabled={saving}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+        <Card>
+          <CardHeader>
+            <CardTitle>Your accounts</CardTitle>
+            <CardDescription>Review and edit existing account records.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? <p>Loading accounts...</p> : null}
+            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+            {!loading && accounts.length === 0 ? (
+              <p>No accounts yet.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Institution</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {accounts.map((account) => (
+                    <TableRow key={account.id}>
+                      <TableCell>{account.name}</TableCell>
+                      <TableCell className="capitalize">{account.type}</TableCell>
+                      <TableCell>{account.institution || "-"}</TableCell>
+                      <TableCell className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleEdit(account)}
+                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(account.id)}
+                          disabled={saving}
+                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Delete
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

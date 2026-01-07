@@ -1,28 +1,15 @@
 "use client";
 
 import { useState } from "react";
-
-const overlayStyle = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(18, 20, 24, 0.45)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: "24px",
-  zIndex: 1000
-};
-
-const modalStyle = {
-  width: "min(560px, 100%)",
-  background: "#ffffff",
-  borderRadius: "16px",
-  border: "1px solid rgba(34, 37, 43, 0.1)",
-  boxShadow: "0 18px 40px rgba(20, 24, 36, 0.2)",
-  padding: "24px",
-  display: "grid",
-  gap: "16px"
-};
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "./ui/dialog";
 
 export default function CategoryManagerModal({
   categories,
@@ -90,43 +77,47 @@ export default function CategoryManagerModal({
     }
   };
 
-  return (
-    <div style={overlayStyle} role="dialog" aria-modal="true">
-      <div style={modalStyle}>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <h3 style={{ margin: 0 }}>Manage categories</h3>
-          <button type="button" onClick={onClose} disabled={saving}>
-            Close
-          </button>
-        </div>
+  const inputClass =
+    "w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10";
+  const buttonClass =
+    "rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60";
+  const ghostButtonClass =
+    "rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60";
 
-        <form
-          onSubmit={handleAdd}
-          style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}
-        >
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : null)}>
+      <DialogContent className="sm:max-w-[560px] max-h-[80vh] overflow-y-auto">
+        <DialogHeader className="flex flex-row items-center justify-between gap-4">
+          <div>
+            <DialogTitle>Manage categories</DialogTitle>
+          </div>
+          <DialogClose asChild>
+            <button type="button" className={ghostButtonClass} disabled={saving}>
+              Close
+            </button>
+          </DialogClose>
+        </DialogHeader>
+
+        <form onSubmit={handleAdd} className="flex flex-wrap gap-2">
           <input
             value={newName}
             onChange={(event) => setNewName(event.target.value)}
             placeholder="New category name"
+            className={inputClass}
           />
-          <button type="submit" disabled={saving}>
+          <button type="submit" className={buttonClass} disabled={saving}>
             Add category
           </button>
         </form>
 
-        {error ? <p style={{ color: "crimson" }}>{error}</p> : null}
+        {error ? <p className="text-sm text-rose-600">{error}</p> : null}
 
-        <div style={{ display: "grid", gap: "12px" }}>
+        <div className="grid gap-3">
           {categories.length === 0 ? <p>No categories yet.</p> : null}
           {categories.map((category) => (
             <div
               key={category.id}
-              style={{
-                display: "flex",
-                gap: "8px",
-                alignItems: "center",
-                flexWrap: "wrap"
-              }}
+              className="flex flex-wrap items-center gap-2"
             >
               {editingId === category.id ? (
                 <>
@@ -134,10 +125,12 @@ export default function CategoryManagerModal({
                     value={editingName}
                     onChange={(event) => setEditingName(event.target.value)}
                     disabled={saving}
+                    className={inputClass}
                   />
                   <button
                     type="button"
                     onClick={() => handleRename(category)}
+                    className={buttonClass}
                     disabled={saving}
                   >
                     Save
@@ -148,6 +141,7 @@ export default function CategoryManagerModal({
                       setEditingId(null);
                       setEditingName("");
                     }}
+                    className={ghostButtonClass}
                     disabled={saving}
                   >
                     Cancel
@@ -155,7 +149,9 @@ export default function CategoryManagerModal({
                 </>
               ) : (
                 <>
-                  <span style={{ flex: "1 1 auto" }}>{category.name}</span>
+                  <span className="flex-1 text-sm font-medium text-slate-800">
+                    {category.name}
+                  </span>
                   <button
                     type="button"
                     onClick={() => {
@@ -163,6 +159,7 @@ export default function CategoryManagerModal({
                       setEditingName(category.name);
                       setError("");
                     }}
+                    className={ghostButtonClass}
                     disabled={saving}
                   >
                     Rename
@@ -170,6 +167,7 @@ export default function CategoryManagerModal({
                   <button
                     type="button"
                     onClick={() => handleDelete(category)}
+                    className={ghostButtonClass}
                     disabled={saving}
                   >
                     Delete
@@ -180,10 +178,12 @@ export default function CategoryManagerModal({
           ))}
         </div>
 
-        <p style={{ margin: 0, fontSize: "13px", color: "#666" }}>
-          Categories in use cannot be deleted.
-        </p>
-      </div>
-    </div>
+        <DialogFooter className="flex items-center justify-between">
+          <DialogDescription>
+            Categories in use cannot be deleted.
+          </DialogDescription>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -1,6 +1,15 @@
 "use client";
 
 import { useMemo } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "./ui/table";
 
 export default function AccountTransactionsSummary({
   accounts = [],
@@ -21,37 +30,41 @@ export default function AccountTransactionsSummary({
   }, [accounts, transactions]);
 
   return (
-    <section className="card">
-      <div className="card-header">
-        <h2>Accounts</h2>
-        <p className="subtle">Total transactions per account.</p>
-      </div>
-      {loading ? <p>Loading accounts...</p> : null}
-      {error ? <p className="error">{error}</p> : null}
-      {!loading && accounts.length === 0 ? (
-        <p>No accounts yet. Add one to start tracking.</p>
-      ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th align="left">Account</th>
-              <th align="left">Type</th>
-              <th align="left">Institution</th>
-              <th align="right">Transactions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {accounts.map((account) => (
-              <tr key={account.id}>
-                <td>{account.name}</td>
-                <td className="caps">{account.type}</td>
-                <td>{account.institution || "-"}</td>
-                <td align="right">{accountCounts[account.id] || 0}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </section>
+    <Card className="lg:col-span-6">
+      <CardHeader>
+        <CardTitle>Accounts</CardTitle>
+        <CardDescription>Total transactions per account.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loading ? <p>Loading accounts...</p> : null}
+        {error ? <p className="text-rose-600">{error}</p> : null}
+        {!loading && accounts.length === 0 ? (
+          <p>No accounts yet. Add one to start tracking.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Account</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Institution</TableHead>
+                <TableHead className="text-right">Transactions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {accounts.map((account) => (
+                <TableRow key={account.id}>
+                  <TableCell>{account.name}</TableCell>
+                  <TableCell className="capitalize">{account.type}</TableCell>
+                  <TableCell>{account.institution || "-"}</TableCell>
+                  <TableCell className="text-right">
+                    {accountCounts[account.id] || 0}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
   );
 }
