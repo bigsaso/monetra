@@ -69,7 +69,8 @@ export default function ExpenseGroupPieChart({
   description = "Monthly needs, wants, investments, and savings.",
   loading = false,
   error = "",
-  className = ""
+  className = "",
+  showMonthControls = true
 }) {
   const resolvedMonth = useMemo(
     () => month || formatMonthValue(new Date()),
@@ -155,27 +156,29 @@ export default function ExpenseGroupPieChart({
           <CardTitle>{title}</CardTitle>
           <CardDescription>{description}</CardDescription>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handlePreviousMonth}
-            disabled={!onMonthChange}
-          >
-            Prev
-          </Button>
-          <span className="min-w-[140px] text-center text-sm font-medium text-slate-700">
-            {formatMonthLabel(resolvedMonth)}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleNextMonth}
-            disabled={!onMonthChange}
-          >
-            Next
-          </Button>
-        </div>
+        {showMonthControls ? (
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handlePreviousMonth}
+              disabled={!onMonthChange}
+            >
+              Prev
+            </Button>
+            <span className="min-w-[140px] text-center text-sm font-medium text-slate-700">
+              {formatMonthLabel(resolvedMonth)}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleNextMonth}
+              disabled={!onMonthChange}
+            >
+              Next
+            </Button>
+          </div>
+        ) : null}
       </CardHeader>
       <CardContent>
         {loading ? (
