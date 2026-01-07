@@ -612,131 +612,143 @@ export default function TransactionsClient() {
       <h1>Transactions</h1>
       <p>Log income and expenses linked to your accounts.</p>
 
-      <section style={{ marginBottom: "32px" }}>
-        <h2>{editingId ? "Edit transaction" : "Add transaction"}</h2>
-        {accounts.length === 0 ? (
-          <p>Set up an account before adding transactions.</p>
-        ) : null}
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "12px" }}>
-          <label>
-            Account
-            <select
-              name="account_id"
-              value={form.account_id}
-              onChange={handleChange}
-              disabled={accounts.length === 0}
-              required
-            >
-              {accounts.length === 0 ? (
-                <option value="">No accounts available</option>
-              ) : (
-                accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.name}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
-          <label>
-            Type
-            <select name="type" value={form.type} onChange={handleChange}>
-              <option value="income">Income</option>
-              <option value="expense">Expense</option>
-              <option value="investment">Investment</option>
-            </select>
-          </label>
-          <label>
-            Amount
-            <input
-              name="amount"
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={form.amount}
-              onChange={handleChange}
-              required
-            />
-          </label>
-          <label>
-            Category
-            <div
-              style={{
-                display: "flex",
-                gap: "8px",
-                flexWrap: "wrap",
-                alignItems: "center"
-              }}
-            >
+      <div
+        style={{
+          display: "flex",
+          gap: "32px",
+          flexWrap: "wrap",
+          alignItems: "flex-start",
+          marginBottom: "32px"
+        }}
+      >
+        <section style={{ flex: "2 1 420px" }}>
+          <h2>{editingId ? "Edit transaction" : "Add transaction"}</h2>
+          {accounts.length === 0 ? (
+            <p>Set up an account before adding transactions.</p>
+          ) : null}
+          <form onSubmit={handleSubmit} style={{ display: "grid", gap: "12px" }}>
+            <label>
+              Account
               <select
-                name="category"
-                value={form.category}
+                name="account_id"
+                value={form.account_id}
                 onChange={handleChange}
-                disabled={categoriesLoading}
+                disabled={accounts.length === 0}
+                required
               >
-                <option value="">Uncategorized</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.name}>
-                    {category.name}
-                  </option>
-                ))}
-                {form.category &&
-                !categories.some(
-                  (category) => category.name === form.category
-                ) ? (
-                  <option value={form.category}>{form.category}</option>
-                ) : null}
+                {accounts.length === 0 ? (
+                  <option value="">No accounts available</option>
+                ) : (
+                  accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))
+                )}
               </select>
-              <button
-                type="button"
-                onClick={() => setShowCategoryModal(true)}
+            </label>
+            <label>
+              Type
+              <select name="type" value={form.type} onChange={handleChange}>
+                <option value="income">Income</option>
+                <option value="expense">Expense</option>
+                <option value="investment">Investment</option>
+              </select>
+            </label>
+            <label>
+              Amount
+              <input
+                name="amount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={form.amount}
+                onChange={handleChange}
+                required
+              />
+            </label>
+            <label>
+              Category
+              <div
+                style={{
+                  display: "flex",
+                  gap: "8px",
+                  flexWrap: "wrap",
+                  alignItems: "center"
+                }}
               >
-                Add/manage categories
-              </button>
-            </div>
-          </label>
-          {categoriesError ? (
-            <p style={{ color: "crimson" }}>{categoriesError}</p>
-          ) : null}
-          <label>
-            Date
-            <input
-              name="date"
-              type="date"
-              value={form.date}
-              onChange={handleChange}
-              required
-            />
-          </label>
-          <label>
-            Notes
-            <input
-              name="notes"
-              value={form.notes}
-              onChange={handleChange}
-              placeholder="Optional"
-            />
-          </label>
-          <button type="submit" disabled={saving || accounts.length === 0}>
-            {editingId ? "Save changes" : "Add transaction"}
-          </button>
-          {editingId ? (
-            <button type="button" onClick={handleCancel} disabled={saving}>
-              Cancel
+                <select
+                  name="category"
+                  value={form.category}
+                  onChange={handleChange}
+                  disabled={categoriesLoading}
+                >
+                  <option value="">Uncategorized</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.name}>
+                      {category.name}
+                    </option>
+                  ))}
+                  {form.category &&
+                  !categories.some(
+                    (category) => category.name === form.category
+                  ) ? (
+                    <option value={form.category}>{form.category}</option>
+                  ) : null}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowCategoryModal(true)}
+                >
+                  Add/manage categories
+                </button>
+              </div>
+            </label>
+            {categoriesError ? (
+              <p style={{ color: "crimson" }}>{categoriesError}</p>
+            ) : null}
+            <label>
+              Date
+              <input
+                name="date"
+                type="date"
+                value={form.date}
+                onChange={handleChange}
+                required
+              />
+            </label>
+            <label>
+              Notes
+              <input
+                name="notes"
+                value={form.notes}
+                onChange={handleChange}
+                placeholder="Optional"
+              />
+            </label>
+            <button type="submit" disabled={saving || accounts.length === 0}>
+              {editingId ? "Save changes" : "Add transaction"}
             </button>
-          ) : null}
-        </form>
-      </section>
+            {editingId ? (
+              <button type="button" onClick={handleCancel} disabled={saving}>
+                Cancel
+              </button>
+            ) : null}
+          </form>
+        </section>
 
-      <section style={{ marginBottom: "32px" }}>
-        <h2>Import expenses</h2>
-        <p>Upload a CSV to preview expenses before saving.</p>
-        <input type="file" accept=".csv,text/csv" onChange={handleCsvUpload} />
-        {importError ? <p style={{ color: "crimson" }}>{importError}</p> : null}
-        {importSuccess ? (
-          <p style={{ color: "seagreen" }}>{importSuccess}</p>
-        ) : null}
-      </section>
+        <section style={{ flex: "1 1 260px" }}>
+          <h2>Import expenses</h2>
+          <p>Upload a CSV to preview expenses before saving.</p>
+          <input type="file" accept=".csv,text/csv" onChange={handleCsvUpload} />
+          {importError ? (
+            <p style={{ color: "crimson" }}>{importError}</p>
+          ) : null}
+          {importSuccess ? (
+            <p style={{ color: "seagreen" }}>{importSuccess}</p>
+          ) : null}
+        </section>
+      </div>
 
       <section>
         <h2>Recent transactions</h2>
