@@ -1,13 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import CategoryBreakdownChart from "./components/CategoryBreakdownChart";
 import ExpenseLineChart from "./components/ExpenseLineChart";
-import ExpenseGroupPieChart from "./components/ExpenseGroupPieChart";
 import MonthlyExpenseSummaryCard from "./components/MonthlyExpenseSummaryCard";
 import MonthlyCashflowChart from "./components/MonthlyCashflowChart";
-import NetFlowSummary from "./components/NetFlowSummary";
-import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
 import { useMonthlyExpenseGroups } from "../lib/useMonthlyExpenseGroups";
@@ -75,12 +71,8 @@ export default function DashboardClient() {
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [budgetEvaluations, setBudgetEvaluations] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [budgetLoading, setBudgetLoading] = useState(true);
   const [budgetError, setBudgetError] = useState("");
-  const [expenseGroupsMonth, setExpenseGroupsMonth] = useState(null);
-  const [categoryBreakdownMonth, setCategoryBreakdownMonth] = useState(null);
   const [expenseSummaryMonth, setExpenseSummaryMonth] = useState(() =>
     formatMonthValue(new Date())
   );
@@ -90,50 +82,21 @@ export default function DashboardClient() {
     error: trendsError
   } = useMonthlyTrends();
   const {
-    data: expenseGroups,
-    loading: expenseGroupsLoading,
-    error: expenseGroupsError
-  } = useMonthlyExpenseGroups({ month: expenseGroupsMonth });
-  const {
     data: expenseSummaryGroups,
     loading: expenseSummaryGroupsLoading,
     error: expenseSummaryGroupsError
   } = useMonthlyExpenseGroups({ month: expenseSummaryMonth });
-  const resolvedCategoryMonth = useMemo(
-    () => categoryBreakdownMonth || formatMonthValue(new Date()),
-    [categoryBreakdownMonth]
-  );
-  const { startDate: categoryStartDate, endDate: categoryEndDate } = useMemo(
-    () => getMonthDateRange(resolvedCategoryMonth),
-    [resolvedCategoryMonth]
-  );
   const { startDate: summaryStartDate, endDate: summaryEndDate } = useMemo(
     () => getMonthDateRange(expenseSummaryMonth),
     [expenseSummaryMonth]
   );
-  const {
-    data: categoryBreakdown,
-    loading: breakdownLoading,
-    error: breakdownError
-  } = useCategoryBreakdown({ startDate: categoryStartDate, endDate: categoryEndDate });
   const {
     data: expenseSummaryCategoryBreakdown,
     loading: expenseSummaryBreakdownLoading,
     error: expenseSummaryBreakdownError
   } = useCategoryBreakdown({ startDate: summaryStartDate, endDate: summaryEndDate });
 
-  const monthLabel = useMemo(
-    () =>
-      new Date().toLocaleString("en-US", {
-        month: "long",
-        year: "numeric"
-      }),
-    []
-  );
-
   const loadData = async () => {
-    setLoading(true);
-    setError("");
     try {
       const [accountsResponse, transactionsResponse] = await Promise.all([
         fetch("/api/accounts"),
@@ -152,9 +115,8 @@ export default function DashboardClient() {
       setAccounts(accountsData);
       setTransactions(transactionsData);
     } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+      // eslint-disable-next-line no-console
+      console.error(err);
     }
   };
 
@@ -180,26 +142,6 @@ export default function DashboardClient() {
     loadData();
     loadBudgetEvaluations();
   }, []);
-
-  const netFlow = useMemo(() => {
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
-    return transactions.reduce((total, transaction) => {
-      const txDate = new Date(`${transaction.date}T00:00:00`);
-      if (txDate < startOfMonth) {
-        return total;
-      }
-      const amount = Number(transaction.amount || 0);
-      if (transaction.type === "expense") {
-        return total - amount;
-      }
-      if (transaction.type === "income") {
-        return total + amount;
-      }
-      return total;
-    }, 0);
-  }, [transactions]);
 
   const expenseSummaryNetFlow = useMemo(() => {
     const bounds = getMonthBounds(expenseSummaryMonth);
@@ -276,18 +218,6 @@ export default function DashboardClient() {
     return Math.max(0, Math.min(ratio, 1));
   };
 
-  const handleCategoryPreviousMonth = () => {
-    setCategoryBreakdownMonth((prev) =>
-      shiftMonth(prev || formatMonthValue(new Date()), -1)
-    );
-  };
-
-  const handleCategoryNextMonth = () => {
-    setCategoryBreakdownMonth((prev) =>
-      shiftMonth(prev || formatMonthValue(new Date()), 1)
-    );
-  };
-
   const handleExpenseSummaryPreviousMonth = () => {
     setExpenseSummaryMonth((prev) => shiftMonth(prev, -1));
   };
@@ -299,38 +229,22 @@ export default function DashboardClient() {
   return (
     <div className="min-h-screen px-5 py-12 pb-20 sm:px-8 lg:px-16">
       <main className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        <Card className="lg:col-span-6 bg-gradient-to-br from-amber-100 to-blue-50">
-          <CardContent className="pt-6">
-            <NetFlowSummary netFlow={netFlow} monthLabel={monthLabel} />
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-6">
-          <CardHeader>
-            <CardTitle>Monthly cashflow</CardTitle>
-            <CardDescription>Income, expenses, and net cashflow.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {trendsLoading ? <p>Loading monthly cashflow...</p> : null}
-            {trendsError ? <p className="text-rose-600">{trendsError}</p> : null}
-            {!trendsLoading && !trendsError ? (
-              <MonthlyCashflowChart data={monthlyTrends} />
-            ) : null}
-          </CardContent>
-        </Card>
-
-        <ExpenseGroupPieChart
-          className="lg:col-span-4"
-          data={expenseGroups}
-          loading={expenseGroupsLoading}
-          error={expenseGroupsError}
-          month={expenseGroupsMonth}
-          onMonthChange={setExpenseGroupsMonth}
-          title="Expense groups"
-          description="Needs, wants, investments, and savings this month."
+        <MonthlyExpenseSummaryCard
+          className="lg:col-span-12"
+          month={expenseSummaryMonth}
+          monthLabel={formatMonthLabel(expenseSummaryMonth)}
+          netFlow={expenseSummaryNetFlow}
+          onPreviousMonth={handleExpenseSummaryPreviousMonth}
+          onNextMonth={handleExpenseSummaryNextMonth}
+          expenseGroups={expenseSummaryGroups}
+          expenseGroupsLoading={expenseSummaryGroupsLoading}
+          expenseGroupsError={expenseSummaryGroupsError}
+          categoryBreakdown={expenseSummaryCategoryBreakdown}
+          categoryBreakdownLoading={expenseSummaryBreakdownLoading}
+          categoryBreakdownError={expenseSummaryBreakdownError}
         />
 
-        <Card className="lg:col-span-8">
+        <Card className="lg:col-span-6">
           <CardHeader>
             <CardTitle>Budget overview</CardTitle>
             <CardDescription>
@@ -394,53 +308,21 @@ export default function DashboardClient() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-12">
-          <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <CardTitle>Expense categories</CardTitle>
-              <CardDescription>
-                Share of spending by category in {formatMonthLabel(resolvedCategoryMonth)}.
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button type="button" variant="outline" onClick={handleCategoryPreviousMonth}>
-                Prev
-              </Button>
-              <span className="min-w-[140px] text-center text-sm font-medium text-slate-700">
-                {formatMonthLabel(resolvedCategoryMonth)}
-              </span>
-              <Button type="button" variant="outline" onClick={handleCategoryNextMonth}>
-                Next
-              </Button>
-            </div>
+        <Card className="lg:col-span-6">
+          <CardHeader>
+            <CardTitle>Monthly cashflow</CardTitle>
+            <CardDescription>Income, expenses, and net cashflow.</CardDescription>
           </CardHeader>
           <CardContent>
-            {breakdownLoading ? <p>Loading category breakdown...</p> : null}
-            {breakdownError ? (
-              <p className="text-rose-600">{breakdownError}</p>
-            ) : null}
-            {!breakdownLoading && !breakdownError ? (
-              <CategoryBreakdownChart data={categoryBreakdown} />
+            {trendsLoading ? <p>Loading monthly cashflow...</p> : null}
+            {trendsError ? <p className="text-rose-600">{trendsError}</p> : null}
+            {!trendsLoading && !trendsError ? (
+              <MonthlyCashflowChart data={monthlyTrends} />
             ) : null}
           </CardContent>
         </Card>
 
         <ExpenseLineChart />
-
-        {/* TODO: Experimental composite card. Validate layout before promoting. */}
-        <MonthlyExpenseSummaryCard
-          month={expenseSummaryMonth}
-          monthLabel={formatMonthLabel(expenseSummaryMonth)}
-          netFlow={expenseSummaryNetFlow}
-          onPreviousMonth={handleExpenseSummaryPreviousMonth}
-          onNextMonth={handleExpenseSummaryNextMonth}
-          expenseGroups={expenseSummaryGroups}
-          expenseGroupsLoading={expenseSummaryGroupsLoading}
-          expenseGroupsError={expenseSummaryGroupsError}
-          categoryBreakdown={expenseSummaryCategoryBreakdown}
-          categoryBreakdownLoading={expenseSummaryBreakdownLoading}
-          categoryBreakdownError={expenseSummaryBreakdownError}
-        />
       </main>
     </div>
   );

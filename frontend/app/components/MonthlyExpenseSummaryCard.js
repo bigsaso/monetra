@@ -13,6 +13,7 @@ import {
 } from "./ui/card";
 
 export default function MonthlyExpenseSummaryCard({
+  className = "",
   month,
   monthLabel,
   netFlow,
@@ -26,7 +27,7 @@ export default function MonthlyExpenseSummaryCard({
   categoryBreakdownError
 }) {
   return (
-    <Card className="lg:col-span-12">
+    <Card className={`lg:col-span-12 ${className}`.trim()}>
       <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <CardTitle>Monthly expense summary</CardTitle>
