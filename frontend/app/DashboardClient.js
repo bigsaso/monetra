@@ -7,6 +7,7 @@ import ExpenseLineChart from "./components/ExpenseLineChart";
 import ExpenseGroupPieChart from "./components/ExpenseGroupPieChart";
 import MonthlyCashflowChart from "./components/MonthlyCashflowChart";
 import SignOutButton from "./components/SignOutButton";
+import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
 import { useMonthlyExpenseGroups } from "../lib/useMonthlyExpenseGroups";
@@ -29,6 +30,38 @@ const progressFillClasses = {
   danger: "bg-rose-500"
 };
 
+const formatMonthValue = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+
+const formatMonthLabel = (value) => {
+  if (!value) return "";
+  const parsed = new Date(`${value}-01T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+};
+
+const formatDateValue = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+
+const shiftMonth = (value, delta) => {
+  const parsed = new Date(`${value}-01T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  parsed.setMonth(parsed.getMonth() + delta);
+  return formatMonthValue(parsed);
+};
+
+const getMonthDateRange = (value) => {
+  const parsed = new Date(`${value}-01T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return { startDate: undefined, endDate: undefined };
+  }
+  const start = new Date(parsed.getFullYear(), parsed.getMonth(), 1);
+  const end = new Date(parsed.getFullYear(), parsed.getMonth() + 1, 0);
+  return { startDate: formatDateValue(start), endDate: formatDateValue(end) };
+};
+
 export default function DashboardClient({ userEmail }) {
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
@@ -38,6 +71,7 @@ export default function DashboardClient({ userEmail }) {
   const [budgetLoading, setBudgetLoading] = useState(true);
   const [budgetError, setBudgetError] = useState("");
   const [expenseGroupsMonth, setExpenseGroupsMonth] = useState(null);
+  const [categoryBreakdownMonth, setCategoryBreakdownMonth] = useState(null);
   const {
     data: monthlyTrends,
     loading: trendsLoading,
@@ -48,11 +82,19 @@ export default function DashboardClient({ userEmail }) {
     loading: expenseGroupsLoading,
     error: expenseGroupsError
   } = useMonthlyExpenseGroups({ month: expenseGroupsMonth });
+  const resolvedCategoryMonth = useMemo(
+    () => categoryBreakdownMonth || formatMonthValue(new Date()),
+    [categoryBreakdownMonth]
+  );
+  const { startDate: categoryStartDate, endDate: categoryEndDate } = useMemo(
+    () => getMonthDateRange(resolvedCategoryMonth),
+    [resolvedCategoryMonth]
+  );
   const {
     data: categoryBreakdown,
     loading: breakdownLoading,
     error: breakdownError
-  } = useCategoryBreakdown();
+  } = useCategoryBreakdown({ startDate: categoryStartDate, endDate: categoryEndDate });
 
   const monthLabel = useMemo(
     () =>
@@ -191,6 +233,18 @@ export default function DashboardClient({ userEmail }) {
 
   const actionClass =
     "rounded-full border border-slate-900 px-4 py-2 text-sm font-medium transition hover:-translate-y-0.5 hover:shadow-md";
+
+  const handleCategoryPreviousMonth = () => {
+    setCategoryBreakdownMonth((prev) =>
+      shiftMonth(prev || formatMonthValue(new Date()), -1)
+    );
+  };
+
+  const handleCategoryNextMonth = () => {
+    setCategoryBreakdownMonth((prev) =>
+      shiftMonth(prev || formatMonthValue(new Date()), 1)
+    );
+  };
 
   return (
     <div className="min-h-screen px-5 py-12 pb-20 sm:px-8 lg:px-16">
@@ -331,11 +385,24 @@ export default function DashboardClient({ userEmail }) {
         </Card>
 
         <Card className="lg:col-span-12">
-          <CardHeader>
-            <CardTitle>Expense categories</CardTitle>
-            <CardDescription>
-              Share of spending by category this month.
-            </CardDescription>
+          <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <CardTitle>Expense categories</CardTitle>
+              <CardDescription>
+                Share of spending by category in {formatMonthLabel(resolvedCategoryMonth)}.
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={handleCategoryPreviousMonth}>
+                Prev
+              </Button>
+              <span className="min-w-[140px] text-center text-sm font-medium text-slate-700">
+                {formatMonthLabel(resolvedCategoryMonth)}
+              </span>
+              <Button type="button" variant="outline" onClick={handleCategoryNextMonth}>
+                Next
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             {breakdownLoading ? <p>Loading category breakdown...</p> : null}
