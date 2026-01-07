@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
+import { Cell, Label, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -23,9 +24,6 @@ const palette = [
 ];
 
 export default function CategoryBreakdownChart({ data }) {
-  const containerRef = useRef(null);
-  const [tooltip, setTooltip] = useState(null);
-
   const chartData = useMemo(
     () =>
       (data || []).map((item, index) => ({
@@ -42,100 +40,67 @@ export default function CategoryBreakdownChart({ data }) {
     [chartData]
   );
 
-  const size = 240;
-  const center = size / 2;
-  const radius = 70;
-  const stroke = 26;
-  const circumference = 2 * Math.PI * radius;
-
-  const chartSegments = useMemo(() => {
-    let offset = 0;
-    return chartData.map((item) => {
-      const fraction = totalSpent > 0 ? item.totalSpent / totalSpent : 0;
-      const length = circumference * fraction;
-      const segment = { ...item, length, offset };
-      offset += length;
-      return segment;
-    });
-  }, [chartData, circumference, totalSpent]);
-
-  const handleHover = (event, index) => {
-    const container = containerRef.current;
-    if (!container) return;
-    const bounds = container.getBoundingClientRect();
-    const x = event.clientX - bounds.left;
-    const y = event.clientY - bounds.top;
-    setTooltip({ index, x, y, width: bounds.width });
+  const renderCenterLabel = ({ viewBox }) => {
+    const { cx, cy } = viewBox;
+    return (
+      <>
+        <text x={cx} y={cy - 4} textAnchor="middle" className="total-label">
+          Total
+        </text>
+        <text x={cx} y={cy + 18} textAnchor="middle" className="total-value">
+          {formatAmount(totalSpent)}
+        </text>
+      </>
+    );
   };
 
-  const handleFocus = (index) => {
-    const container = containerRef.current;
-    if (!container) return;
-    const bounds = container.getBoundingClientRect();
-    setTooltip({ index, x: bounds.width / 2, y: bounds.height / 2, width: bounds.width });
+  const CustomTooltip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
+    const data = payload[0]?.payload;
+    if (!data) return null;
+    return (
+      <div className="tooltip">
+        <p className="tooltip-title">{data.category}</p>
+        <p>{formatAmount(data.totalSpent)}</p>
+      </div>
+    );
   };
-
-  const handleLeave = () => setTooltip(null);
-
-  const tooltipData =
-    tooltip && chartData[tooltip.index] ? chartData[tooltip.index] : null;
-
-  const tooltipStyle = tooltip
-    ? {
-        left: `${Math.min(Math.max(tooltip.x, 100), tooltip.width - 100)}px`,
-        top: `${Math.max(tooltip.y - 12, 12)}px`
-      }
-    : {};
 
   if (!chartData.length || totalSpent <= 0) {
     return <p className="chart-empty">No expense data yet.</p>;
   }
 
   return (
-    <div className="breakdown" ref={containerRef} onMouseLeave={handleLeave}>
+    <div className="breakdown">
       <div className="chart-row">
-        <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Expense breakdown">
-          <g transform={`rotate(-90 ${center} ${center})`}>
-            <circle
-              cx={center}
-              cy={center}
-              r={radius}
-              className="ring"
-              strokeWidth={stroke}
-            />
-            {chartSegments.map((segment, index) => (
-              <circle
-                key={`${segment.category}-${index}`}
-                cx={center}
-                cy={center}
-                r={radius}
-                className="segment"
-                stroke={segment.color}
-                strokeWidth={stroke}
-                strokeDasharray={`${segment.length} ${circumference - segment.length}`}
-                strokeDashoffset={-segment.offset}
-                onMouseMove={(event) => handleHover(event, index)}
-                onFocus={() => handleFocus(index)}
-                tabIndex={0}
-              />
-            ))}
-          </g>
-          <text x={center} y={center - 4} textAnchor="middle" className="total-label">
-            Total
-          </text>
-          <text x={center} y={center + 18} textAnchor="middle" className="total-value">
-            {formatAmount(totalSpent)}
-          </text>
-        </svg>
+        <div className="donut" role="img" aria-label="Expense breakdown">
+          <ResponsiveContainer width="100%" height={240}>
+            <PieChart>
+              <Pie
+                data={chartData}
+                dataKey="totalSpent"
+                nameKey="category"
+                innerRadius={70}
+                outerRadius={96}
+                paddingAngle={2}
+                stroke="none"
+                labelLine={false}
+              >
+                <Label content={renderCenterLabel} position="center" />
+                {chartData.map((entry, index) => (
+                  <Cell key={`${entry.category}-${index}`} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip content={<CustomTooltip />} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
 
         <div className="legend">
           {chartData.map((item, index) => (
             <div
               key={`${item.category}-${index}`}
               className="legend-row"
-              onMouseMove={(event) => handleHover(event, index)}
-              onMouseLeave={handleLeave}
-              onFocus={() => handleFocus(index)}
               tabIndex={0}
               role="button"
             >
@@ -146,13 +111,6 @@ export default function CategoryBreakdownChart({ data }) {
           ))}
         </div>
       </div>
-
-      {tooltipData ? (
-        <div className="tooltip" style={tooltipStyle}>
-          <p className="tooltip-title">{tooltipData.category}</p>
-          <p>{formatAmount(tooltipData.totalSpent)}</p>
-        </div>
-      ) : null}
 
       <style jsx>{`
         .breakdown {
@@ -166,20 +124,9 @@ export default function CategoryBreakdownChart({ data }) {
           align-items: center;
         }
 
-        svg {
+        .donut {
           width: 100%;
-          height: auto;
-          display: block;
-        }
-
-        .ring {
-          fill: none;
-          stroke: rgba(34, 37, 43, 0.08);
-        }
-
-        .segment {
-          fill: none;
-          cursor: pointer;
+          min-width: 220px;
         }
 
         .total-label {
@@ -226,15 +173,12 @@ export default function CategoryBreakdownChart({ data }) {
         }
 
         .tooltip {
-          position: absolute;
-          transform: translate(-50%, -100%);
           background: rgba(255, 255, 255, 0.95);
           border: 1px solid rgba(34, 37, 43, 0.1);
           border-radius: 12px;
           padding: 10px 12px;
           font-size: 12px;
           color: #2d3138;
-          pointer-events: none;
           box-shadow: 0 10px 20px rgba(20, 24, 36, 0.12);
           min-width: 140px;
         }
@@ -259,6 +203,10 @@ export default function CategoryBreakdownChart({ data }) {
           .chart-row {
             grid-template-columns: 1fr;
           }
+        }
+
+        :global(.recharts-tooltip-wrapper) {
+          outline: none;
         }
       `}</style>
     </div>

@@ -1,6 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from "recharts";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -168,9 +177,9 @@ export default function ExpenseLineChart({
     return new Set(selectedAccountId ? [selectedAccountId] : []);
   }, [selectedAccountId]);
 
-  const { series, maxValue } = useMemo(() => {
+  const { series } = useMemo(() => {
     if (!accountIds.size) {
-      return { series: [], maxValue: 0 };
+      return { series: [] };
     }
     const expenseTransactions = accountTransactions.filter(
       (transaction) =>
@@ -178,7 +187,7 @@ export default function ExpenseLineChart({
         accountIds.has(normalizeId(transaction.account_id))
     );
     if (!expenseTransactions.length) {
-      return { series: [], maxValue: 0 };
+      return { series: [] };
     }
 
     const totals = new Map();
@@ -200,7 +209,7 @@ export default function ExpenseLineChart({
     });
 
     if (!minDate || !maxDate) {
-      return { series: [], maxValue: 0 };
+      return { series: [] };
     }
 
     const seriesData = [];
@@ -216,8 +225,7 @@ export default function ExpenseLineChart({
       cursor = addInterval(cursor, resolution);
     }
 
-    const max = Math.max(...seriesData.map((item) => item.total), 0);
-    return { series: seriesData, maxValue: max };
+    return { series: seriesData };
   }, [accountIds, resolution, accountTransactions]);
 
   useEffect(() => {
@@ -256,34 +264,10 @@ export default function ExpenseLineChart({
     };
   }, [selectedAccountId]);
 
-  const width = 960;
-  const height = 360;
-  const padding = { top: 20, right: 24, bottom: 44, left: 64 };
-  const chartWidth = width - padding.left - padding.right;
-  const chartHeight = height - padding.top - padding.bottom;
-
-  const scaleY = (value) => {
-    const range = maxValue || 1;
-    return padding.top + (1 - value / range) * chartHeight;
-  };
-
   const pointCount = series.length;
-  const scaleX = (index) => {
-    if (pointCount <= 1) {
-      return padding.left + chartWidth / 2;
-    }
-    return padding.left + (chartWidth * index) / (pointCount - 1);
-  };
 
   const labelInterval = pointCount > 10 ? Math.ceil(pointCount / 6) : 1;
-  const tickCount = 4;
-  const tickValues = Array.from({ length: tickCount + 1 }, (_, index) => {
-    return maxValue - (maxValue * index) / tickCount;
-  });
-
-  const linePoints = series
-    .map((item, index) => `${scaleX(index)},${scaleY(item.total)}`)
-    .join(" ");
+  const tickInterval = Math.max(labelInterval - 1, 0);
 
   const emptyMessage = !accounts.length
     ? "No accounts yet."
@@ -348,57 +332,50 @@ export default function ExpenseLineChart({
 
           {!listLoading && !chartLoading && !error && series.length > 0 ? (
             <div className="chart">
-              <svg viewBox={`0 0 ${width} ${height}`} role="img">
-            <g>
-              {tickValues.map((value) => {
-                const y = scaleY(value);
-                return (
-                  <g key={`grid-${value}`}>
-                    <line
-                      x1={padding.left}
-                      x2={width - padding.right}
-                      y1={y}
-                      y2={y}
-                      className="grid-line"
-                    />
-                    <text x={padding.left - 12} y={y + 4} className="tick">
-                      {currencyFormatter.format(value)}
-                    </text>
-                  </g>
-                );
-              })}
-            </g>
-
-            <polyline
-              fill="none"
-              className="line"
-              points={linePoints}
-            />
-
-            {series.map((item, index) => (
-              <circle
-                key={`point-${item.label}`}
-                cx={scaleX(index)}
-                cy={scaleY(item.total)}
-                r="3"
-                className="point"
-              />
-            ))}
-
-            {series.map((item, index) =>
-              index % labelInterval === 0 ? (
-                <text
-                  key={`label-${item.label}`}
-                  x={scaleX(index)}
-                  y={height - padding.bottom + 22}
-                  textAnchor="middle"
-                  className="label"
+              <ResponsiveContainer width="100%" height={320}>
+                <LineChart
+                  data={series}
+                  margin={{ top: 20, right: 24, bottom: 36, left: 8 }}
                 >
-                  {item.label}
-                </text>
-              ) : null
-            )}
-              </svg>
+                  <CartesianGrid stroke="rgba(34, 37, 43, 0.08)" vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    interval={tickInterval}
+                    tick={{ fontSize: 10, fill: "#6b6f78" }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tickFormatter={(value) => currencyFormatter.format(value)}
+                    width={72}
+                    domain={[0, "dataMax"]}
+                    tick={{ fontSize: 11, fill: "#6b6f78" }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload?.length) return null;
+                      const value = payload[0]?.value ?? 0;
+                      return (
+                        <div className="tooltip">
+                          <p className="tooltip-title">{label}</p>
+                          <p>{currencyFormatter.format(value)}</p>
+                        </div>
+                      );
+                    }}
+                    cursor={{ stroke: "rgba(46, 47, 51, 0.2)" }}
+                    wrapperStyle={{ outline: "none" }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="total"
+                    stroke="#2e2f33"
+                    strokeWidth={2}
+                    dot={{ r: 3, fill: "#2e2f33" }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           ) : null}
         </div>
@@ -427,12 +404,6 @@ export default function ExpenseLineChart({
 
         .chart {
           width: 100%;
-        }
-
-        svg {
-          width: 100%;
-          height: auto;
-          display: block;
         }
 
         .selectors {
@@ -465,29 +436,26 @@ export default function ExpenseLineChart({
           color: #7b808a;
         }
 
-        .grid-line {
-          stroke: rgba(34, 37, 43, 0.08);
-          stroke-width: 1;
+        .tooltip {
+          background: rgba(255, 255, 255, 0.95);
+          border: 1px solid rgba(34, 37, 43, 0.1);
+          border-radius: 12px;
+          padding: 10px 12px;
+          font-size: 12px;
+          color: #2d3138;
+          box-shadow: 0 10px 20px rgba(20, 24, 36, 0.12);
+          min-width: 140px;
         }
 
-        .tick {
-          font-size: 11px;
-          fill: #6b6f78;
-          text-anchor: end;
+        .tooltip-title {
+          margin: 0 0 6px;
+          font-weight: 600;
+          color: #2e2f33;
         }
 
-        .label {
-          font-size: 10px;
-          fill: #6b6f78;
-        }
-
-        .line {
-          stroke: #2e2f33;
-          stroke-width: 2;
-        }
-
-        .point {
-          fill: #2e2f33;
+        .tooltip p {
+          margin: 0;
+          line-height: 1.4;
         }
 
         .chart-empty {
@@ -508,6 +476,10 @@ export default function ExpenseLineChart({
             flex-direction: row;
             flex-wrap: wrap;
           }
+        }
+
+        :global(.recharts-cartesian-axis-tick text) {
+          font-family: inherit;
         }
       `}</style>
     </section>

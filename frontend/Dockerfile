@@ -10,8 +10,6 @@ COPY frontend/package.json ./
 RUN npm install
 
 COPY frontend ./
-COPY widgets /app/widgets
-COPY layout /app/layout
 RUN npm run build
 
 EXPOSE 3000

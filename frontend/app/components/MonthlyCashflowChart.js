@@ -1,6 +1,17 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
+import {
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from "recharts";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -11,10 +22,24 @@ const formatAmount = (value) => currencyFormatter.format(value);
 
 const formatMonthLabel = (value) => value || "-";
 
-export default function MonthlyCashflowChart({ data }) {
-  const containerRef = useRef(null);
-  const [tooltip, setTooltip] = useState(null);
+const CustomTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  const data = payload.reduce((acc, entry) => {
+    acc[entry.dataKey] = entry.value;
+    return acc;
+  }, {});
 
+  return (
+    <div className="tooltip">
+      <p className="tooltip-title">{formatMonthLabel(label)}</p>
+      <p>Income: {formatAmount(data.income || 0)}</p>
+      <p>Expenses: {formatAmount(data.expenses || 0)}</p>
+      <p>Net: {formatAmount(data.net || 0)}</p>
+    </div>
+  );
+};
+
+export default function MonthlyCashflowChart({ data }) {
   const chartData = useMemo(
     () =>
       (data || []).map((item) => {
@@ -31,179 +56,63 @@ export default function MonthlyCashflowChart({ data }) {
     [data]
   );
 
-  const metrics = useMemo(() => {
-    if (!chartData.length) {
-      return { minValue: 0, maxValue: 0 };
-    }
-    const values = chartData.flatMap((item) => [
-      item.income,
-      item.expenses,
-      item.net
-    ]);
-    const maxValue = Math.max(0, ...values);
-    const minValue = Math.min(0, ...values);
-    return { minValue, maxValue };
-  }, [chartData]);
-
-  const width = 720;
-  const height = 280;
-  const padding = { top: 20, right: 24, bottom: 44, left: 64 };
-  const chartWidth = width - padding.left - padding.right;
-  const chartHeight = height - padding.top - padding.bottom;
-  const range = metrics.maxValue - metrics.minValue || 1;
-
-  const scaleY = (value) =>
-    padding.top + ((metrics.maxValue - value) / range) * chartHeight;
-
-  const zeroY = scaleY(0);
-
-  const tickCount = 4;
-  const tickValues = Array.from({ length: tickCount + 1 }, (_, index) => {
-    return metrics.maxValue - (range * index) / tickCount;
-  });
-
-  const groupWidth = chartData.length ? chartWidth / chartData.length : 0;
-  const barWidth = groupWidth * 0.28;
-  const barGap = groupWidth * 0.12;
-
-  const handleHover = (event, index) => {
-    const container = containerRef.current;
-    if (!container) return;
-    const bounds = container.getBoundingClientRect();
-    const x = event.clientX - bounds.left;
-    const y = event.clientY - bounds.top;
-    setTooltip({ index, x, y, width: bounds.width });
-  };
-
-  const handleLeave = () => setTooltip(null);
-
-  const tooltipData =
-    tooltip && chartData[tooltip.index] ? chartData[tooltip.index] : null;
-
-  const tooltipStyle = tooltip
-    ? {
-        left: `${Math.min(Math.max(tooltip.x, 90), tooltip.width - 90)}px`,
-        top: `${Math.max(tooltip.y - 12, 12)}px`
-      }
-    : {};
-
   if (!chartData.length) {
     return <p className="chart-empty">No monthly cashflow data yet.</p>;
   }
 
   return (
-    <div className="chart" ref={containerRef} onMouseLeave={handleLeave}>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img">
-        <g>
-          {tickValues.map((value) => {
-            const y = scaleY(value);
-            return (
-              <g key={`grid-${value}`}>
-                <line
-                  x1={padding.left}
-                  x2={width - padding.right}
-                  y1={y}
-                  y2={y}
-                  className="grid-line"
-                />
-                <text x={padding.left - 12} y={y + 4} className="tick">
-                  {formatAmount(value)}
-                </text>
-              </g>
-            );
-          })}
-        </g>
-
-        <line
-          x1={padding.left}
-          x2={width - padding.right}
-          y1={zeroY}
-          y2={zeroY}
-          className="axis-line"
-        />
-
-        {chartData.map((item, index) => {
-          const groupX = padding.left + index * groupWidth;
-          const incomeHeight = Math.abs(zeroY - scaleY(item.income));
-          const expenseHeight = Math.abs(zeroY - scaleY(item.expenses));
-          const incomeX = groupX + (groupWidth - (2 * barWidth + barGap)) / 2;
-          const expenseX = incomeX + barWidth + barGap;
-
-          return (
-            <g key={item.month}>
-              <rect
-                x={incomeX}
-                y={scaleY(item.income)}
-                width={barWidth}
-                height={incomeHeight}
-                className="bar income"
-                rx="4"
-              />
-              <rect
-                x={expenseX}
-                y={scaleY(item.expenses)}
-                width={barWidth}
-                height={expenseHeight}
-                className="bar expense"
-                rx="4"
-              />
-              <rect
-                x={groupX}
-                y={padding.top}
-                width={groupWidth}
-                height={chartHeight}
-                className="hover-target"
-                onMouseMove={(event) => handleHover(event, index)}
-                onFocus={(event) => handleHover(event, index)}
-                tabIndex={0}
-              />
-              <text
-                x={groupX + groupWidth / 2}
-                y={height - padding.bottom + 22}
-                textAnchor="middle"
-                className="month"
-              >
-                {formatMonthLabel(item.month)}
-              </text>
-            </g>
-          );
-        })}
-
-        <polyline
-          fill="none"
-          className="net-line"
-          points={chartData
-            .map((item, index) => {
-              const x = padding.left + index * groupWidth + groupWidth / 2;
-              const y = scaleY(item.net);
-              return `${x},${y}`;
-            })
-            .join(" ")}
-        />
-
-        {chartData.map((item, index) => {
-          const x = padding.left + index * groupWidth + groupWidth / 2;
-          const y = scaleY(item.net);
-          return (
-            <circle
-              key={`point-${item.month}`}
-              cx={x}
-              cy={y}
-              r="3"
-              className="net-point"
-            />
-          );
-        })}
-      </svg>
-
-      {tooltipData ? (
-        <div className="tooltip" style={tooltipStyle}>
-          <p className="tooltip-title">{tooltipData.month}</p>
-          <p>Income: {formatAmount(tooltipData.income)}</p>
-          <p>Expenses: {formatAmount(tooltipData.expenses)}</p>
-          <p>Net: {formatAmount(tooltipData.net)}</p>
-        </div>
-      ) : null}
+    <div className="chart">
+      <ResponsiveContainer width="100%" height={280}>
+        <ComposedChart
+          data={chartData}
+          margin={{ top: 20, right: 24, bottom: 36, left: 8 }}
+        >
+          <CartesianGrid stroke="rgba(34, 37, 43, 0.08)" vertical={false} />
+          <XAxis
+            dataKey="month"
+            tickFormatter={formatMonthLabel}
+            tick={{ fontSize: 11, fill: "#6b6f78" }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <YAxis
+            tickFormatter={formatAmount}
+            width={72}
+            tick={{ fontSize: 11, fill: "#6b6f78" }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <Tooltip
+            content={<CustomTooltip />}
+            cursor={{ fill: "rgba(46, 47, 51, 0.04)" }}
+            wrapperStyle={{ outline: "none" }}
+          />
+          <ReferenceLine
+            y={0}
+            stroke="rgba(34, 37, 43, 0.2)"
+            strokeWidth={1.2}
+          />
+          <Bar
+            dataKey="income"
+            fill="#1f7a4d"
+            radius={[4, 4, 0, 0]}
+            barSize={18}
+          />
+          <Bar
+            dataKey="expenses"
+            fill="#b23a3a"
+            radius={[4, 4, 0, 0]}
+            barSize={18}
+          />
+          <Line
+            type="monotone"
+            dataKey="net"
+            stroke="#2e2f33"
+            strokeWidth={2}
+            dot={{ r: 3, fill: "#2e2f33" }}
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
 
       <div className="legend">
         <span className="legend-item">
@@ -223,64 +132,14 @@ export default function MonthlyCashflowChart({ data }) {
           width: 100%;
         }
 
-        svg {
-          width: 100%;
-          height: auto;
-          display: block;
-        }
-
-        .grid-line {
-          stroke: rgba(34, 37, 43, 0.08);
-          stroke-width: 1;
-        }
-
-        .axis-line {
-          stroke: rgba(34, 37, 43, 0.2);
-          stroke-width: 1.2;
-        }
-
-        .tick {
-          font-size: 11px;
-          fill: #6b6f78;
-          text-anchor: end;
-        }
-
-        .month {
-          font-size: 11px;
-          fill: #6b6f78;
-        }
-
-        .bar {
-          fill: #1f7a4d;
-        }
-
-        .bar.expense {
-          fill: #b23a3a;
-        }
-
-        .net-line {
-          stroke: #2e2f33;
-          stroke-width: 2;
-        }
-
-        .net-point {
-          fill: #2e2f33;
-        }
-
-        .hover-target {
-          fill: transparent;
-        }
-
         .tooltip {
           position: absolute;
-          transform: translate(-50%, -100%);
           background: rgba(255, 255, 255, 0.95);
           border: 1px solid rgba(34, 37, 43, 0.1);
           border-radius: 12px;
           padding: 10px 12px;
           font-size: 12px;
           color: #2d3138;
-          pointer-events: none;
           box-shadow: 0 10px 20px rgba(20, 24, 36, 0.12);
           min-width: 160px;
         }
@@ -329,6 +188,10 @@ export default function MonthlyCashflowChart({ data }) {
         .chart-empty {
           margin: 0;
           color: #666a73;
+        }
+
+        :global(.recharts-cartesian-axis-tick text) {
+          font-family: inherit;
         }
       `}</style>
     </div>
