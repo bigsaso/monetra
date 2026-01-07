@@ -5,6 +5,15 @@ import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "../../components/ui/dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -18,7 +27,9 @@ const emptyForm = { name: "", type: "checking", institution: "" };
 export default function AccountsClient() {
   const [accounts, setAccounts] = useState([]);
   const [form, setForm] = useState(emptyForm);
+  const [editForm, setEditForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [isEditOpen, setIsEditOpen] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -55,20 +66,16 @@ export default function AccountsClient() {
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(
-        editingId ? `/api/accounts/${editingId}` : "/api/accounts",
-        {
-          method: editingId ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(form)
-        }
-      );
+      const response = await fetch("/api/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form)
+      });
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data?.detail || "Failed to save account.");
       }
       setForm(emptyForm);
-      setEditingId(null);
       await loadAccounts();
     } catch (err) {
       setError(err.message);
@@ -79,16 +86,50 @@ export default function AccountsClient() {
 
   const handleEdit = (account) => {
     setEditingId(account.id);
-    setForm({
+    setError("");
+    setEditForm({
       name: account.name,
       type: account.type,
       institution: account.institution || ""
     });
+    setIsEditOpen(true);
   };
 
-  const handleCancel = () => {
+  const handleEditChange = (event) => {
+    const { name, value } = event.target;
+    setEditForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleEditSubmit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/accounts/${editingId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editForm)
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to save account.");
+      }
+      setEditingId(null);
+      setIsEditOpen(false);
+      setEditForm(emptyForm);
+      await loadAccounts();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditCancel = () => {
     setEditingId(null);
-    setForm(emptyForm);
+    setIsEditOpen(false);
+    setEditForm(emptyForm);
+    setError("");
   };
 
   const handleDelete = async (accountId) => {
@@ -128,7 +169,7 @@ export default function AccountsClient() {
       <div className="mt-8 grid gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>{editingId ? "Edit account" : "Add account"}</CardTitle>
+            <CardTitle>Add account</CardTitle>
             <CardDescription>Keep your funding sources up to date.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -173,18 +214,8 @@ export default function AccountsClient() {
                   disabled={saving}
                   className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
                 >
-              {editingId ? "Save changes" : "Add account"}
-            </button>
-            {editingId ? (
-              <button
-                type="button"
-                onClick={handleCancel}
-                disabled={saving}
-                className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Cancel
-              </button>
-            ) : null}
+                  Add account
+                </button>
               </div>
             </form>
           </CardContent>
@@ -241,6 +272,77 @@ export default function AccountsClient() {
           </CardContent>
         </Card>
       </div>
+      <Dialog
+        open={isEditOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleEditCancel();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Edit account</DialogTitle>
+            <DialogDescription>Update the account details.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleEditSubmit} className="grid gap-4">
+            <label className="text-sm text-slate-600">
+              Name
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="name"
+                value={editForm.name}
+                onChange={handleEditChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Type
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="type"
+                value={editForm.type}
+                onChange={handleEditChange}
+              >
+                <option value="checking">Checking</option>
+                <option value="savings">Savings</option>
+                <option value="credit">Credit</option>
+                <option value="investment">Investment</option>
+              </select>
+            </label>
+            <label className="text-sm text-slate-600">
+              Institution
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="institution"
+                value={editForm.institution}
+                onChange={handleEditChange}
+                placeholder="Optional"
+              />
+            </label>
+            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <button
+                  type="button"
+                  onClick={handleEditCancel}
+                  disabled={saving}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </DialogClose>
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Save changes
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
