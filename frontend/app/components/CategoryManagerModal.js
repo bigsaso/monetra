@@ -19,8 +19,10 @@ export default function CategoryManagerModal({
   onDelete
 }) {
   const [newName, setNewName] = useState("");
+  const [newGroup, setNewGroup] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editingName, setEditingName] = useState("");
+  const [editingGroup, setEditingGroup] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -34,8 +36,9 @@ export default function CategoryManagerModal({
     setSaving(true);
     setError("");
     try {
-      await onCreate(trimmed);
+      await onCreate(trimmed, newGroup || null);
       setNewName("");
+      setNewGroup("");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -52,9 +55,10 @@ export default function CategoryManagerModal({
     setSaving(true);
     setError("");
     try {
-      await onRename(category.id, trimmed, category.name);
+      await onRename(category.id, trimmed, category.name, editingGroup || null);
       setEditingId(null);
       setEditingName("");
+      setEditingGroup("");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -83,6 +87,8 @@ export default function CategoryManagerModal({
     "rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60";
   const ghostButtonClass =
     "rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60";
+  const formatGroup = (group) =>
+    group ? `${group[0].toUpperCase()}${group.slice(1)}` : "No group";
 
   return (
     <Dialog open onOpenChange={(open) => (!open ? onClose() : null)}>
@@ -105,6 +111,16 @@ export default function CategoryManagerModal({
             placeholder="New category name"
             className={inputClass}
           />
+          <select
+            value={newGroup}
+            onChange={(event) => setNewGroup(event.target.value)}
+            className={inputClass}
+          >
+            <option value="">No group</option>
+            <option value="needs">Needs</option>
+            <option value="wants">Wants</option>
+            <option value="investments">Investments</option>
+          </select>
           <button type="submit" className={buttonClass} disabled={saving}>
             Add category
           </button>
@@ -127,6 +143,17 @@ export default function CategoryManagerModal({
                     disabled={saving}
                     className={inputClass}
                   />
+                  <select
+                    value={editingGroup}
+                    onChange={(event) => setEditingGroup(event.target.value)}
+                    disabled={saving}
+                    className={inputClass}
+                  >
+                    <option value="">No group</option>
+                    <option value="needs">Needs</option>
+                    <option value="wants">Wants</option>
+                    <option value="investments">Investments</option>
+                  </select>
                   <button
                     type="button"
                     onClick={() => handleRename(category)}
@@ -140,6 +167,7 @@ export default function CategoryManagerModal({
                     onClick={() => {
                       setEditingId(null);
                       setEditingName("");
+                      setEditingGroup("");
                     }}
                     className={ghostButtonClass}
                     disabled={saving}
@@ -152,11 +180,15 @@ export default function CategoryManagerModal({
                   <span className="flex-1 text-sm font-medium text-slate-800">
                     {category.name}
                   </span>
+                  <span className="text-xs text-slate-500">
+                    {formatGroup(category.group)}
+                  </span>
                   <button
                     type="button"
                     onClick={() => {
                       setEditingId(category.id);
                       setEditingName(category.name);
+                      setEditingGroup(category.group || "");
                       setError("");
                     }}
                     className={ghostButtonClass}

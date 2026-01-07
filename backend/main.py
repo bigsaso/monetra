@@ -1,5 +1,5 @@
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import bcrypt
@@ -85,6 +85,7 @@ categories = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
     Column("name", String(255), nullable=False),
+    Column("group", String(20)),
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
     UniqueConstraint("user_id", "name", name="uq_categories_user_name"),
 )
@@ -173,6 +174,17 @@ class AccountType:
         normalized = value.strip().lower()
         if normalized not in cls.values:
             raise ValueError("Invalid account type.")
+        return normalized
+
+
+class CategoryGroup:
+    values = {"needs", "wants", "investments"}
+
+    @classmethod
+    def normalize(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in cls.values:
+            raise ValueError("Invalid category group.")
         return normalized
 
 
@@ -284,6 +296,12 @@ class CategoryBreakdownResponse(BaseModel):
     percentage_of_total: Decimal
 
 
+class MonthlyExpenseGroupResponse(BaseModel):
+    needs_total: Decimal
+    wants_total: Decimal
+    investments_total: Decimal
+
+
 class IncomeProjectionEntry(BaseModel):
     date: date
     amount: Decimal
@@ -327,12 +345,15 @@ class PayScheduleResponse(BaseModel):
 
 class CategoryPayload(BaseModel):
     name: str
+    group: str | None = None
 
     @classmethod
     def validate_payload(cls, payload: "CategoryPayload") -> "CategoryPayload":
         payload.name = payload.name.strip()
         if not payload.name:
             raise ValueError("Category name required.")
+        if payload.group is not None:
+            payload.group = CategoryGroup.normalize(payload.group)
         return payload
 
 
@@ -340,6 +361,7 @@ class CategoryResponse(BaseModel):
     id: int
     user_id: int
     name: str
+    group: str | None = None
     created_at: datetime | None = None
 
 
@@ -445,6 +467,64 @@ def iter_months(start_value: date, end_value: date) -> list[date]:
     return months
 
 
+def month_end(value: date) -> date:
+    next_month = shift_month(month_start(value), 1)
+    return next_month - timedelta(days=1)
+
+
+def parse_month_value(value: str) -> date:
+    try:
+        return datetime.strptime(value, "%Y-%m").date()
+    except ValueError:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise ValueError("Invalid month format. Use YYYY-MM.") from exc
+
+
+def fetch_expense_group_totals(
+    user_id: int, start_date: date, end_date: date
+) -> dict[str, Decimal]:
+    group_expr = categories.c.group.label("group")
+    total_spent_expr = func.coalesce(func.sum(transactions.c.amount), 0).label("total_spent")
+    stmt = (
+        select(group_expr, total_spent_expr)
+        .select_from(
+            transactions.join(
+                categories,
+                (transactions.c.user_id == categories.c.user_id)
+                & (transactions.c.category == categories.c.name),
+            )
+        )
+        .where(
+            transactions.c.user_id == user_id,
+            transactions.c.type == "expense",
+            transactions.c.date >= start_date,
+            transactions.c.date <= end_date,
+            categories.c.group.isnot(None),
+        )
+        .group_by(group_expr)
+    )
+    with engine.begin() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    totals = {
+        "needs": Decimal("0"),
+        "wants": Decimal("0"),
+        "investments": Decimal("0"),
+    }
+    for row in rows:
+        group = row["group"]
+        if group not in totals:
+            continue
+        total_value = row["total_spent"]
+        total_decimal = (
+            total_value if isinstance(total_value, Decimal) else Decimal(str(total_value))
+        )
+        totals[group] = total_decimal
+    return totals
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -507,6 +587,7 @@ def list_categories(
             id=row["id"],
             user_id=row["user_id"],
             name=row["name"],
+            group=row["group"],
             created_at=row["created_at"],
         )
         for row in rows
@@ -525,11 +606,12 @@ def create_category(
 
     stmt = (
         insert(categories)
-        .values(user_id=user_id, name=payload.name)
+        .values(user_id=user_id, name=payload.name, group=payload.group)
         .returning(
             categories.c.id,
             categories.c.user_id,
             categories.c.name,
+            categories.c.group,
             categories.c.created_at,
         )
     )
@@ -546,6 +628,7 @@ def create_category(
         id=row["id"],
         user_id=row["user_id"],
         name=row["name"],
+        group=row["group"],
         created_at=row["created_at"],
     )
 
@@ -565,11 +648,12 @@ def update_category(
     stmt = (
         update(categories)
         .where(categories.c.id == category_id, categories.c.user_id == user_id)
-        .values(name=payload.name)
+        .values(name=payload.name, group=payload.group)
         .returning(
             categories.c.id,
             categories.c.user_id,
             categories.c.name,
+            categories.c.group,
             categories.c.created_at,
         )
     )
@@ -586,6 +670,7 @@ def update_category(
         id=row["id"],
         user_id=row["user_id"],
         name=row["name"],
+        group=row["group"],
         created_at=row["created_at"],
     )
 
@@ -1348,6 +1433,29 @@ def category_breakdown(
             )
         )
     return results
+
+
+@app.get("/reports/monthly-expense-groups", response_model=MonthlyExpenseGroupResponse)
+def monthly_expense_groups(
+    month: str | None = Query(None),
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> MonthlyExpenseGroupResponse:
+    user_id = get_user_id(x_user_id)
+    month_date = date.today()
+    if month:
+        try:
+            month_date = parse_month_value(month)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    start_date = month_start(month_date)
+    end_date = month_end(month_date)
+
+    totals = fetch_expense_group_totals(user_id, start_date, end_date)
+    return MonthlyExpenseGroupResponse(
+        needs_total=totals["needs"],
+        wants_total=totals["wants"],
+        investments_total=totals["investments"],
+    )
 
 
 @app.get("/budget/rules", response_model=list[BudgetRuleResponse])

@@ -113,11 +113,11 @@ export default function BudgetClient() {
     }
   };
 
-  const createCategory = async (name) => {
+  const createCategory = async (name, group) => {
     const response = await fetch("/api/categories", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, group })
     });
     const data = await response.json();
     if (!response.ok) {
@@ -127,11 +127,11 @@ export default function BudgetClient() {
     setForm((prev) => ({ ...prev, category: data.name }));
   };
 
-  const renameCategory = async (categoryId, nextName, previousName) => {
+  const renameCategory = async (categoryId, nextName, previousName, group) => {
     const response = await fetch(`/api/categories/${categoryId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: nextName })
+      body: JSON.stringify({ name: nextName, group })
     });
     const data = await response.json();
     if (!response.ok) {
