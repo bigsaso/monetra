@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import CategoryManagerModal from "../components/CategoryManagerModal";
 import CsvImportPreviewModal from "../components/CsvImportPreviewModal";
+import InvestmentManagerModal from "../components/InvestmentManagerModal";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import {
@@ -21,7 +23,11 @@ const buildEmptyForm = (dateValue) => ({
   type: "expense",
   category: "",
   date: dateValue,
-  notes: ""
+  notes: "",
+  investment_id: "",
+  quantity: "",
+  price: "",
+  investment_type: ""
 });
 
 const normalizeAmount = (value) => {
@@ -274,18 +280,23 @@ const buildPreviewRows = (text) => {
 
 export default function TransactionsClient() {
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const searchParams = useSearchParams();
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [transactions, setTransactions] = useState([]);
+  const [investments, setInvestments] = useState([]);
   const [form, setForm] = useState(buildEmptyForm(today));
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [investmentsLoading, setInvestmentsLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [addSuccess, setAddSuccess] = useState("");
   const [categoriesError, setCategoriesError] = useState("");
+  const [investmentsError, setInvestmentsError] = useState("");
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [showInvestmentModal, setShowInvestmentModal] = useState(false);
   const [importRows, setImportRows] = useState([]);
   const [importError, setImportError] = useState("");
   const [importCommitError, setImportCommitError] = useState("");
@@ -296,6 +307,7 @@ export default function TransactionsClient() {
   const [bulkCategory, setBulkCategory] = useState("");
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
+  const [highlightedTransactionId, setHighlightedTransactionId] = useState(null);
 
   const currencyFormatter = useMemo(
     () =>
@@ -309,10 +321,44 @@ export default function TransactionsClient() {
     1,
     Math.ceil(transactions.length / rowsPerPage)
   );
+  const selectedCategoryGroup = useMemo(() => {
+    if (!form.category) {
+      return "";
+    }
+    const match = categories.find((category) => category.name === form.category);
+    return match?.group || "";
+  }, [categories, form.category]);
   const pagedTransactions = useMemo(() => {
     const start = (currentPage - 1) * rowsPerPage;
     return transactions.slice(start, start + rowsPerPage);
   }, [currentPage, rowsPerPage, transactions]);
+
+  useEffect(() => {
+    const transactionId = searchParams.get("transactionId");
+    if (!transactionId) {
+      return;
+    }
+    const parsedId = Number(transactionId);
+    if (!Number.isFinite(parsedId) || transactions.length === 0) {
+      return;
+    }
+    const index = transactions.findIndex((transaction) => transaction.id === parsedId);
+    if (index === -1) {
+      return;
+    }
+    setCurrentPage(Math.floor(index / rowsPerPage) + 1);
+    setHighlightedTransactionId(parsedId);
+  }, [searchParams, rowsPerPage, transactions]);
+
+  useEffect(() => {
+    if (!highlightedTransactionId) {
+      return;
+    }
+    const row = document.getElementById(`transaction-${highlightedTransactionId}`);
+    if (row) {
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [highlightedTransactionId, currentPage]);
 
   useEffect(() => {
     setCurrentPage((prev) => {
@@ -373,9 +419,30 @@ export default function TransactionsClient() {
     }
   };
 
+  const loadInvestments = async () => {
+    setInvestmentsLoading(true);
+    setInvestmentsError("");
+    try {
+      const response = await fetch("/api/investments");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load investments.");
+      }
+      const data = await response.json();
+      setInvestments(data);
+      return data;
+    } catch (err) {
+      setInvestmentsError(err.message);
+      return [];
+    } finally {
+      setInvestmentsLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadData();
     loadCategories();
+    loadInvestments();
   }, []);
 
   useEffect(() => {
@@ -398,6 +465,19 @@ export default function TransactionsClient() {
     }
   }, [accounts, form.account_id]);
 
+  useEffect(() => {
+    if (selectedCategoryGroup === "investments") {
+      return;
+    }
+    setForm((prev) => ({
+      ...prev,
+      investment_id: "",
+      quantity: "",
+      price: "",
+      investment_type: ""
+    }));
+  }, [selectedCategoryGroup]);
+
   const handleChange = (event) => {
     const { name, value } = event.target;
     setAddSuccess("");
@@ -409,6 +489,36 @@ export default function TransactionsClient() {
     if (!form.account_id) {
       setError("Select an account before adding a transaction.");
       return;
+    }
+    const investmentValues = [
+      form.investment_id,
+      form.quantity,
+      form.price,
+      form.investment_type
+    ];
+    const hasInvestmentValues = investmentValues.some((value) =>
+      String(value ?? "").trim()
+    );
+    if (selectedCategoryGroup === "investments" && hasInvestmentValues) {
+      if (
+        !form.investment_id ||
+        !form.quantity ||
+        !form.price ||
+        !form.investment_type
+      ) {
+        setError("Complete investment selection, quantity, price, and action.");
+        return;
+      }
+      const quantityValue = Number(form.quantity);
+      const priceValue = Number(form.price);
+      if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+        setError("Investment quantity must be greater than zero.");
+        return;
+      }
+      if (!Number.isFinite(priceValue) || priceValue <= 0) {
+        setError("Investment price must be greater than zero.");
+        return;
+      }
     }
     setSaving(true);
     setError("");
@@ -422,6 +532,12 @@ export default function TransactionsClient() {
         date: form.date,
         notes: form.notes || null
       };
+      if (selectedCategoryGroup === "investments" && hasInvestmentValues) {
+        payload.investment_id = Number(form.investment_id);
+        payload.quantity = Number(form.quantity);
+        payload.price = Number(form.price);
+        payload.investment_type = form.investment_type;
+      }
       const response = await fetch(
         editingId ? `/api/transactions/${editingId}` : "/api/transactions",
         {
@@ -462,7 +578,11 @@ export default function TransactionsClient() {
       type: transaction.type,
       category: transaction.category || "",
       date: transaction.date,
-      notes: transaction.notes || ""
+      notes: transaction.notes || "",
+      investment_id: "",
+      quantity: "",
+      price: "",
+      investment_type: ""
     });
   };
 
@@ -538,6 +658,49 @@ export default function TransactionsClient() {
         ...prev,
         category: refreshed[0]?.name || ""
       }));
+    }
+  };
+
+  const createInvestment = async (payload) => {
+    const response = await fetch("/api/investments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.detail || "Failed to create investment.");
+    }
+    await loadInvestments();
+    if (selectedCategoryGroup === "investments") {
+      setForm((prev) => ({ ...prev, investment_id: String(data.id) }));
+    }
+  };
+
+  const updateInvestment = async (investmentId, payload) => {
+    const response = await fetch(`/api/investments/${investmentId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.detail || "Failed to update investment.");
+    }
+    await loadInvestments();
+  };
+
+  const deleteInvestment = async (investmentId) => {
+    const response = await fetch(`/api/investments/${investmentId}`, {
+      method: "DELETE"
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.detail || "Failed to delete investment.");
+    }
+    await loadInvestments();
+    if (Number(form.investment_id) === investmentId) {
+      setForm((prev) => ({ ...prev, investment_id: "" }));
     }
   };
 
@@ -770,6 +933,78 @@ export default function TransactionsClient() {
             {categoriesError ? (
               <p className="text-sm text-rose-600">{categoriesError}</p>
             ) : null}
+            {selectedCategoryGroup === "investments" ? (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
+                  <span>Investment details</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowInvestmentModal(true)}
+                    className={ghostButtonClass}
+                  >
+                    Add/manage investments
+                  </button>
+                </div>
+                <label className="text-sm text-slate-600">
+                  Investment
+                  <select
+                    className={inputClass}
+                    name="investment_id"
+                    value={form.investment_id}
+                    onChange={handleChange}
+                    disabled={investmentsLoading}
+                  >
+                    <option value="">No investment selected</option>
+                    {investments.map((investment) => (
+                      <option key={investment.id} value={investment.id}>
+                        {investment.name}
+                        {investment.symbol ? ` (${investment.symbol})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm text-slate-600">
+                  Action
+                  <select
+                    className={inputClass}
+                    name="investment_type"
+                    value={form.investment_type}
+                    onChange={handleChange}
+                  >
+                    <option value="">Select action</option>
+                    <option value="buy">Buy</option>
+                    <option value="sell">Sell</option>
+                  </select>
+                </label>
+                <label className="text-sm text-slate-600">
+                  Quantity
+                  <input
+                    className={inputClass}
+                    name="quantity"
+                    type="number"
+                    step="0.0001"
+                    min="0"
+                    value={form.quantity}
+                    onChange={handleChange}
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  Price
+                  <input
+                    className={inputClass}
+                    name="price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={form.price}
+                    onChange={handleChange}
+                  />
+                </label>
+                {investmentsError ? (
+                  <p className="text-sm text-rose-600">{investmentsError}</p>
+                ) : null}
+              </>
+            ) : null}
             <label className="text-sm text-slate-600">
               Date
               <input
@@ -910,7 +1145,13 @@ export default function TransactionsClient() {
             </TableHeader>
             <TableBody>
               {pagedTransactions.map((transaction) => (
-                <TableRow key={transaction.id}>
+                <TableRow
+                  key={transaction.id}
+                  id={`transaction-${transaction.id}`}
+                  className={
+                    transaction.id === highlightedTransactionId ? "bg-amber-50" : ""
+                  }
+                >
                   <TableCell>{transaction.date}</TableCell>
                   <TableCell>{accountLookup[transaction.account_id] || "-"}</TableCell>
                   <TableCell className="capitalize">
@@ -974,6 +1215,15 @@ export default function TransactionsClient() {
           onCreate={createCategory}
           onRename={renameCategory}
           onDelete={deleteCategory}
+        />
+      ) : null}
+      {showInvestmentModal ? (
+        <InvestmentManagerModal
+          investments={investments}
+          onClose={() => setShowInvestmentModal(false)}
+          onCreate={createInvestment}
+          onUpdate={updateInvestment}
+          onDelete={deleteInvestment}
         />
       ) : null}
     </div>

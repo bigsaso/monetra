@@ -127,6 +127,30 @@ pay_schedules = Table(
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
 )
 
+investments = Table(
+    "investments",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
+    Column("name", String(255), nullable=False),
+    Column("symbol", String(50)),
+    Column("asset_type", String(50), nullable=False),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+)
+
+investment_entries = Table(
+    "investment_entries",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
+    Column("investment_id", Integer, ForeignKey("investments.id"), nullable=False),
+    Column("transaction_id", Integer, ForeignKey("transactions.id"), nullable=False),
+    Column("quantity", Numeric(18, 8), nullable=False),
+    Column("price", Numeric(12, 2), nullable=False),
+    Column("type", String(10), nullable=False),
+    Column("date", Date, nullable=False),
+)
+
 @app.on_event("startup")
 def init_db() -> None:
     metadata.create_all(engine)
@@ -177,6 +201,17 @@ class AccountType:
         return normalized
 
 
+class InvestmentAssetType:
+    values = {"stock", "etf", "mutual_fund", "crypto", "bond", "cash", "real_estate", "other"}
+
+    @classmethod
+    def validate(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in cls.values:
+            raise ValueError("Invalid asset type.")
+        return normalized
+
+
 class CategoryGroup:
     values = {"needs", "wants", "investments"}
 
@@ -210,6 +245,10 @@ class TransactionPayload(BaseModel):
     category: str | None = None
     date: date
     notes: str | None = None
+    investment_id: int | None = None
+    quantity: Decimal | None = None
+    price: Decimal | None = None
+    investment_type: str | None = None
 
     @classmethod
     def validate_payload(cls, payload: "TransactionPayload") -> "TransactionPayload":
@@ -366,6 +405,43 @@ class CategoryResponse(BaseModel):
     created_at: datetime | None = None
 
 
+class InvestmentPayload(BaseModel):
+    name: str
+    asset_type: str
+    symbol: str | None = None
+
+    @classmethod
+    def validate_payload(cls, payload: "InvestmentPayload") -> "InvestmentPayload":
+        payload.name = payload.name.strip()
+        if not payload.name:
+            raise ValueError("Investment name required.")
+        payload.asset_type = InvestmentAssetType.validate(payload.asset_type)
+        if payload.symbol is not None:
+            payload.symbol = payload.symbol.strip().upper() or None
+        return payload
+
+
+class InvestmentResponse(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    asset_type: str
+    symbol: str | None = None
+    created_at: datetime | None = None
+
+
+class InvestmentActivityResponse(BaseModel):
+    id: int
+    investment_id: int
+    investment_name: str
+    investment_symbol: str | None = None
+    transaction_id: int
+    type: str
+    quantity: Decimal
+    price: Decimal
+    date: date
+
+
 class TransactionImportPreviewResponse(BaseModel):
     transactions: list[ParsedTransaction]
     total_count: int
@@ -438,6 +514,46 @@ def category_in_use(conn, user_id: int, name: str) -> bool:
         .limit(1)
     ).first()
     return bool(rule_match)
+
+
+def get_category_group(conn, user_id: int, name: str | None) -> str | None:
+    if not name:
+        return None
+    result = conn.execute(
+        select(categories.c.group).where(categories.c.user_id == user_id, categories.c.name == name)
+    ).first()
+    if not result:
+        return None
+    return result[0]
+
+
+def extract_investment_entry(payload: TransactionPayload) -> dict | None:
+    provided = any(
+        value is not None
+        for value in (
+            payload.investment_id,
+            payload.quantity,
+            payload.price,
+            payload.investment_type,
+        )
+    )
+    if not provided:
+        return None
+    if payload.investment_id is None or payload.quantity is None or payload.price is None or payload.investment_type is None:
+        raise ValueError("Investment entries require investment_id, quantity, price, and investment_type.")
+    investment_type = payload.investment_type.strip().lower()
+    if investment_type not in {"buy", "sell"}:
+        raise ValueError("Investment type must be 'buy' or 'sell'.")
+    if payload.quantity <= 0:
+        raise ValueError("Investment quantity must be greater than zero.")
+    if payload.price <= 0:
+        raise ValueError("Investment price must be greater than zero.")
+    return {
+        "investment_id": payload.investment_id,
+        "quantity": payload.quantity,
+        "price": payload.price,
+        "type": investment_type,
+    }
 
 
 def get_period_range(period: str, today: date) -> tuple[date, date]:
@@ -813,6 +929,169 @@ def delete_account(account_id: int, x_user_id: str | None = Header(None, alias="
     return {"status": "deleted"}
 
 
+@app.get("/investments", response_model=list[InvestmentResponse])
+def list_investments(
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[InvestmentResponse]:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        result = conn.execute(
+            select(investments).where(investments.c.user_id == user_id).order_by(investments.c.created_at.desc())
+        )
+        rows = result.mappings().all()
+    return [
+        InvestmentResponse(
+            id=row["id"],
+            user_id=row["user_id"],
+            name=row["name"],
+            symbol=row["symbol"],
+            asset_type=row["asset_type"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+@app.get("/investments/activity", response_model=list[InvestmentActivityResponse])
+def list_investment_activity(
+    investment_id: int | None = None,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[InvestmentActivityResponse]:
+    user_id = get_user_id(x_user_id)
+    conditions = [investment_entries.c.user_id == user_id]
+    if investment_id is not None:
+        conditions.append(investment_entries.c.investment_id == investment_id)
+    stmt = (
+        select(
+            investment_entries.c.id,
+            investment_entries.c.investment_id,
+            investment_entries.c.transaction_id,
+            investment_entries.c.quantity,
+            investment_entries.c.price,
+            investment_entries.c.type,
+            investment_entries.c.date,
+            investments.c.name.label("investment_name"),
+            investments.c.symbol.label("investment_symbol"),
+        )
+        .select_from(
+            investment_entries.join(
+                investments, investment_entries.c.investment_id == investments.c.id
+            )
+        )
+        .where(*conditions)
+        .order_by(investment_entries.c.date.desc(), investment_entries.c.id.desc())
+    )
+    with engine.begin() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [
+        InvestmentActivityResponse(
+            id=row["id"],
+            investment_id=row["investment_id"],
+            investment_name=row["investment_name"],
+            investment_symbol=row["investment_symbol"],
+            transaction_id=row["transaction_id"],
+            type=row["type"],
+            quantity=row["quantity"],
+            price=row["price"],
+            date=row["date"],
+        )
+        for row in rows
+    ]
+
+
+@app.post("/investments", response_model=InvestmentResponse)
+def create_investment(
+    payload: InvestmentPayload, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> InvestmentResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = InvestmentPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    stmt = (
+        insert(investments)
+        .values(
+            user_id=user_id,
+            name=payload.name,
+            symbol=payload.symbol,
+            asset_type=payload.asset_type,
+        )
+        .returning(
+            investments.c.id,
+            investments.c.user_id,
+            investments.c.name,
+            investments.c.symbol,
+            investments.c.asset_type,
+            investments.c.created_at,
+        )
+    )
+    with engine.begin() as conn:
+        result = conn.execute(stmt)
+        row = result.mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create investment.")
+    return InvestmentResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        name=row["name"],
+        symbol=row["symbol"],
+        asset_type=row["asset_type"],
+        created_at=row["created_at"],
+    )
+
+
+@app.put("/investments/{investment_id}", response_model=InvestmentResponse)
+def update_investment(
+    investment_id: int, payload: InvestmentPayload, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> InvestmentResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = InvestmentPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    stmt = (
+        update(investments)
+        .where(investments.c.id == investment_id, investments.c.user_id == user_id)
+        .values(name=payload.name, symbol=payload.symbol, asset_type=payload.asset_type)
+        .returning(
+            investments.c.id,
+            investments.c.user_id,
+            investments.c.name,
+            investments.c.symbol,
+            investments.c.asset_type,
+            investments.c.created_at,
+        )
+    )
+    with engine.begin() as conn:
+        result = conn.execute(stmt)
+        row = result.mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Investment not found.")
+    return InvestmentResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        name=row["name"],
+        symbol=row["symbol"],
+        asset_type=row["asset_type"],
+        created_at=row["created_at"],
+    )
+
+
+@app.delete("/investments/{investment_id}")
+def delete_investment(investment_id: int, x_user_id: str | None = Header(None, alias="x-user-id")) -> dict:
+    user_id = get_user_id(x_user_id)
+    stmt = investments.delete().where(investments.c.id == investment_id, investments.c.user_id == user_id)
+    with engine.begin() as conn:
+        result = conn.execute(stmt)
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Investment not found.")
+    return {"status": "deleted"}
+
+
 @app.get("/pay-schedules", response_model=list[PayScheduleResponse])
 def list_pay_schedules(
     x_user_id: str | None = Header(None, alias="x-user-id"),
@@ -1116,6 +1395,22 @@ def create_transaction(
         ).first()
         if not account_exists:
             raise HTTPException(status_code=404, detail="Account not found.")
+        category_group = get_category_group(conn, user_id, payload.category)
+        investment_entry = None
+        if category_group == "investments":
+            try:
+                investment_entry = extract_investment_entry(payload)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if investment_entry:
+                investment_exists = conn.execute(
+                    select(investments.c.id).where(
+                        investments.c.id == investment_entry["investment_id"],
+                        investments.c.user_id == user_id,
+                    )
+                ).first()
+                if not investment_exists:
+                    raise HTTPException(status_code=404, detail="Investment not found.")
 
         stmt = (
             insert(transactions)
@@ -1141,6 +1436,18 @@ def create_transaction(
         )
         result = conn.execute(stmt)
         row = result.mappings().first()
+        if row and investment_entry:
+            conn.execute(
+                insert(investment_entries).values(
+                    user_id=user_id,
+                    investment_id=investment_entry["investment_id"],
+                    transaction_id=row["id"],
+                    quantity=investment_entry["quantity"],
+                    price=investment_entry["price"],
+                    type=investment_entry["type"],
+                    date=payload.date,
+                )
+            )
 
     if not row:
         raise HTTPException(status_code=500, detail="Failed to create transaction.")
@@ -1174,6 +1481,22 @@ def update_transaction(
         ).first()
         if not account_exists:
             raise HTTPException(status_code=404, detail="Account not found.")
+        category_group = get_category_group(conn, user_id, payload.category)
+        investment_entry = None
+        if category_group == "investments":
+            try:
+                investment_entry = extract_investment_entry(payload)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if investment_entry:
+                investment_exists = conn.execute(
+                    select(investments.c.id).where(
+                        investments.c.id == investment_entry["investment_id"],
+                        investments.c.user_id == user_id,
+                    )
+                ).first()
+                if not investment_exists:
+                    raise HTTPException(status_code=404, detail="Investment not found.")
 
         stmt = (
             update(transactions)
@@ -1199,6 +1522,37 @@ def update_transaction(
         )
         result = conn.execute(stmt)
         row = result.mappings().first()
+        if row and investment_entry:
+            existing_entry = conn.execute(
+                select(investment_entries.c.id).where(
+                    investment_entries.c.transaction_id == transaction_id,
+                    investment_entries.c.user_id == user_id,
+                )
+            ).first()
+            if existing_entry:
+                conn.execute(
+                    update(investment_entries)
+                    .where(investment_entries.c.id == existing_entry[0])
+                    .values(
+                        investment_id=investment_entry["investment_id"],
+                        quantity=investment_entry["quantity"],
+                        price=investment_entry["price"],
+                        type=investment_entry["type"],
+                        date=payload.date,
+                    )
+                )
+            else:
+                conn.execute(
+                    insert(investment_entries).values(
+                        user_id=user_id,
+                        investment_id=investment_entry["investment_id"],
+                        transaction_id=transaction_id,
+                        quantity=investment_entry["quantity"],
+                        price=investment_entry["price"],
+                        type=investment_entry["type"],
+                        date=payload.date,
+                    )
+                )
 
     if not row:
         raise HTTPException(status_code=404, detail="Transaction not found.")

@@ -213,6 +213,9 @@ export default function DashboardClient({ userEmail }) {
           <Link href="/pay-schedules" className={`${actionClass} bg-transparent text-slate-900`}>
             Pay schedules
           </Link>
+          <Link href="/investments" className={`${actionClass} bg-transparent text-slate-900`}>
+            Investments
+          </Link>
           <Link href="/transactions" className={`${actionClass} bg-transparent text-slate-900`}>
             View transactions
           </Link>
