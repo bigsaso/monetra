@@ -5,6 +5,15 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "../components/ui/dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -38,7 +47,9 @@ export default function InvestmentsClient() {
   const [investments, setInvestments] = useState([]);
   const [activity, setActivity] = useState([]);
   const [form, setForm] = useState(emptyForm);
+  const [editForm, setEditForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [isEditOpen, setIsEditOpen] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -130,20 +141,16 @@ export default function InvestmentsClient() {
         symbol: form.symbol,
         asset_type: form.asset_type
       };
-      const response = await fetch(
-        editingId ? `/api/investments/${editingId}` : "/api/investments",
-        {
-          method: editingId ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        }
-      );
+      const response = await fetch("/api/investments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data?.detail || "Failed to save investment.");
       }
       setForm(emptyForm);
-      setEditingId(null);
       await loadInvestments();
     } catch (err) {
       setError(err.message);
@@ -154,16 +161,63 @@ export default function InvestmentsClient() {
 
   const handleEdit = (investment) => {
     setEditingId(investment.id);
-    setForm({
+    setError("");
+    setEditForm({
       name: investment.name,
       symbol: investment.symbol || "",
       asset_type: investment.asset_type || "stock"
     });
+    setIsEditOpen(true);
   };
 
-  const handleCancel = () => {
+  const handleEditChange = (event) => {
+    const { name, value } = event.target;
+    setEditForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleEditSubmit = async (event) => {
+    event.preventDefault();
+    if (!editForm.name.trim()) {
+      setError("Enter an investment name.");
+      return;
+    }
+    if (!editForm.asset_type) {
+      setError("Select an asset type.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    try {
+      const payload = {
+        name: editForm.name,
+        symbol: editForm.symbol,
+        asset_type: editForm.asset_type
+      };
+      const response = await fetch(`/api/investments/${editingId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to save investment.");
+      }
+      setEditingId(null);
+      setIsEditOpen(false);
+      await loadInvestments();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditCancel = () => {
     setEditingId(null);
-    setForm(emptyForm);
+    setIsEditOpen(false);
+    setEditForm(emptyForm);
+    setError("");
   };
 
   const handleDelete = async (investmentId) => {
@@ -203,7 +257,7 @@ export default function InvestmentsClient() {
       <div className="mt-8 grid gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>{editingId ? "Edit investment" : "Add investment"}</CardTitle>
+            <CardTitle>Add investment</CardTitle>
             <CardDescription>Store the tickers and asset types you track.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -245,18 +299,8 @@ export default function InvestmentsClient() {
               </label>
               <div className="flex flex-wrap gap-2">
                 <Button type="submit" disabled={saving}>
-                  {editingId ? "Save changes" : "Add investment"}
+                  Add investment
                 </Button>
-                {editingId ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleCancel}
-                    disabled={saving}
-                  >
-                    Cancel
-                  </Button>
-                ) : null}
               </div>
             </form>
           </CardContent>
@@ -370,6 +414,69 @@ export default function InvestmentsClient() {
           </CardContent>
         </Card>
       </div>
+      <Dialog
+        open={isEditOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleEditCancel();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Edit investment</DialogTitle>
+            <DialogDescription>Update the investment details.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleEditSubmit} className="grid gap-4">
+            <label className="text-sm text-slate-600">
+              Name
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="name"
+                value={editForm.name}
+                onChange={handleEditChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Symbol
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="symbol"
+                value={editForm.symbol}
+                onChange={handleEditChange}
+                placeholder="Optional"
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Asset type
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="asset_type"
+                value={editForm.asset_type}
+                onChange={handleEditChange}
+              >
+                {assetTypeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="outline" onClick={handleEditCancel}>
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button type="submit" disabled={saving}>
+                Save changes
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

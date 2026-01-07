@@ -7,6 +7,8 @@
     --chart-needs: 148 38% 36%;
     --chart-wants: 28 84% 52%;
     --chart-investments: 210 34% 40%;
+    --chart-savings: 168 56% 36%;
+    --chart-overbudget: 0 72% 52%;
   }
 
   body {

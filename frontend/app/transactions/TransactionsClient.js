@@ -9,6 +9,15 @@ import InvestmentManagerModal from "../components/InvestmentManagerModal";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "../components/ui/dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -286,7 +295,9 @@ export default function TransactionsClient() {
   const [transactions, setTransactions] = useState([]);
   const [investments, setInvestments] = useState([]);
   const [form, setForm] = useState(buildEmptyForm(today));
+  const [editForm, setEditForm] = useState(buildEmptyForm(today));
   const [editingId, setEditingId] = useState(null);
+  const [isEditOpen, setIsEditOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [investmentsLoading, setInvestmentsLoading] = useState(true);
@@ -328,6 +339,13 @@ export default function TransactionsClient() {
     const match = categories.find((category) => category.name === form.category);
     return match?.group || "";
   }, [categories, form.category]);
+  const selectedEditCategoryGroup = useMemo(() => {
+    if (!editForm.category) {
+      return "";
+    }
+    const match = categories.find((category) => category.name === editForm.category);
+    return match?.group || "";
+  }, [categories, editForm.category]);
   const pagedTransactions = useMemo(() => {
     const start = (currentPage - 1) * rowsPerPage;
     return transactions.slice(start, start + rowsPerPage);
@@ -478,6 +496,19 @@ export default function TransactionsClient() {
     }));
   }, [selectedCategoryGroup]);
 
+  useEffect(() => {
+    if (selectedEditCategoryGroup === "investments") {
+      return;
+    }
+    setEditForm((prev) => ({
+      ...prev,
+      investment_id: "",
+      quantity: "",
+      price: "",
+      investment_type: ""
+    }));
+  }, [selectedEditCategoryGroup]);
+
   const handleChange = (event) => {
     const { name, value } = event.target;
     setAddSuccess("");
@@ -538,23 +569,17 @@ export default function TransactionsClient() {
         payload.price = Number(form.price);
         payload.investment_type = form.investment_type;
       }
-      const response = await fetch(
-        editingId ? `/api/transactions/${editingId}` : "/api/transactions",
-        {
-          method: editingId ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        }
-      );
+      const response = await fetch("/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data?.detail || "Failed to save transaction.");
       }
-      setEditingId(null);
       await loadData();
-      if (!editingId) {
-        setAddSuccess("Transaction added.");
-      }
+      setAddSuccess("Transaction added.");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -572,24 +597,110 @@ export default function TransactionsClient() {
   const handleEdit = (transaction) => {
     setEditingId(transaction.id);
     setAddSuccess("");
-    setForm({
+    setError("");
+    setEditForm({
       account_id: String(transaction.account_id),
       amount: String(transaction.amount),
       type: transaction.type,
       category: transaction.category || "",
       date: transaction.date,
       notes: transaction.notes || "",
-      investment_id: "",
-      quantity: "",
-      price: "",
-      investment_type: ""
+      investment_id: transaction.investment_id ? String(transaction.investment_id) : "",
+      quantity:
+        transaction.quantity !== null && transaction.quantity !== undefined
+          ? String(transaction.quantity)
+          : "",
+      price:
+        transaction.price !== null && transaction.price !== undefined
+          ? String(transaction.price)
+          : "",
+      investment_type: transaction.investment_type || ""
     });
+    setIsEditOpen(true);
   };
 
-  const handleCancel = () => {
+  const handleEditChange = (event) => {
+    const { name, value } = event.target;
+    setEditForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleEditSubmit = async (event) => {
+    event.preventDefault();
+    if (!editForm.account_id) {
+      setError("Select an account before adding a transaction.");
+      return;
+    }
+    const investmentValues = [
+      editForm.investment_id,
+      editForm.quantity,
+      editForm.price,
+      editForm.investment_type
+    ];
+    const hasInvestmentValues = investmentValues.some((value) =>
+      String(value ?? "").trim()
+    );
+    if (selectedEditCategoryGroup === "investments" && hasInvestmentValues) {
+      if (
+        !editForm.investment_id ||
+        !editForm.quantity ||
+        !editForm.price ||
+        !editForm.investment_type
+      ) {
+        setError("Complete investment selection, quantity, price, and action.");
+        return;
+      }
+      const quantityValue = Number(editForm.quantity);
+      const priceValue = Number(editForm.price);
+      if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+        setError("Investment quantity must be greater than zero.");
+        return;
+      }
+      if (!Number.isFinite(priceValue) || priceValue <= 0) {
+        setError("Investment price must be greater than zero.");
+        return;
+      }
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const payload = {
+        account_id: Number(editForm.account_id),
+        amount: Number(editForm.amount),
+        type: editForm.type,
+        category: editForm.category ? editForm.category.trim() : null,
+        date: editForm.date,
+        notes: editForm.notes || null
+      };
+      if (selectedEditCategoryGroup === "investments" && hasInvestmentValues) {
+        payload.investment_id = Number(editForm.investment_id);
+        payload.quantity = Number(editForm.quantity);
+        payload.price = Number(editForm.price);
+        payload.investment_type = editForm.investment_type;
+      }
+      const response = await fetch(`/api/transactions/${editingId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to save transaction.");
+      }
+      setEditingId(null);
+      setIsEditOpen(false);
+      await loadData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditCancel = () => {
     setEditingId(null);
-    setAddSuccess("");
-    setForm(buildEmptyForm(today));
+    setIsEditOpen(false);
+    setEditForm(buildEmptyForm(today));
+    setError("");
   };
 
   const handleDelete = async (transactionId) => {
@@ -839,7 +950,7 @@ export default function TransactionsClient() {
       <div className="mt-8 flex flex-wrap items-start gap-8">
         <Card className="flex-[2_1_420px]">
           <CardHeader>
-            <CardTitle>{editingId ? "Edit transaction" : "Add transaction"}</CardTitle>
+            <CardTitle>Add transaction</CardTitle>
             <CardDescription>
               Capture a new income or expense linked to your accounts.
             </CardDescription>
@@ -1032,18 +1143,8 @@ export default function TransactionsClient() {
                 className={buttonClass}
                 disabled={saving || accounts.length === 0}
               >
-              {editingId ? "Save changes" : "Add transaction"}
+              Add transaction
               </button>
-              {editingId ? (
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  className={ghostButtonClass}
-                  disabled={saving}
-                >
-                  Cancel
-                </button>
-              ) : null}
             </div>
             {addSuccess ? (
               <p className="text-sm text-emerald-600">{addSuccess}</p>
@@ -1226,6 +1327,220 @@ export default function TransactionsClient() {
           onDelete={deleteInvestment}
         />
       ) : null}
+      <Dialog
+        open={isEditOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleEditCancel();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[720px] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit transaction</DialogTitle>
+            <DialogDescription>
+              Update the details for this transaction.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleEditSubmit} className="grid gap-4">
+            <label className="text-sm text-slate-600">
+              Account
+              <select
+                className={inputClass}
+                name="account_id"
+                value={editForm.account_id}
+                onChange={handleEditChange}
+                disabled={accounts.length === 0}
+                required
+              >
+                {accounts.length === 0 ? (
+                  <option value="">No accounts available</option>
+                ) : (
+                  accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+            <label className="text-sm text-slate-600">
+              Type
+              <select
+                className={inputClass}
+                name="type"
+                value={editForm.type}
+                onChange={handleEditChange}
+              >
+                <option value="income">Income</option>
+                <option value="expense">Expense</option>
+                <option value="investment">Investment</option>
+              </select>
+            </label>
+            <label className="text-sm text-slate-600">
+              Amount
+              <input
+                className={inputClass}
+                name="amount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={editForm.amount}
+                onChange={handleEditChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Category
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <select
+                  className={inputClass}
+                  name="category"
+                  value={editForm.category}
+                  onChange={handleEditChange}
+                  disabled={categoriesLoading}
+                >
+                  <option value="">Uncategorized</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.name}>
+                      {category.name}
+                    </option>
+                  ))}
+                  {editForm.category &&
+                  !categories.some(
+                    (category) => category.name === editForm.category
+                  ) ? (
+                    <option value={editForm.category}>{editForm.category}</option>
+                  ) : null}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowCategoryModal(true)}
+                  className={ghostButtonClass}
+                >
+                  Add/manage categories
+                </button>
+              </div>
+            </label>
+            {categoriesError ? (
+              <p className="text-sm text-rose-600">{categoriesError}</p>
+            ) : null}
+            {selectedEditCategoryGroup === "investments" ? (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
+                  <span>Investment details</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowInvestmentModal(true)}
+                    className={ghostButtonClass}
+                  >
+                    Add/manage investments
+                  </button>
+                </div>
+                <label className="text-sm text-slate-600">
+                  Investment
+                  <select
+                    className={inputClass}
+                    name="investment_id"
+                    value={editForm.investment_id}
+                    onChange={handleEditChange}
+                    disabled={investmentsLoading}
+                  >
+                    <option value="">No investment selected</option>
+                    {investments.map((investment) => (
+                      <option key={investment.id} value={investment.id}>
+                        {investment.name}
+                        {investment.symbol ? ` (${investment.symbol})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm text-slate-600">
+                  Action
+                  <select
+                    className={inputClass}
+                    name="investment_type"
+                    value={editForm.investment_type}
+                    onChange={handleEditChange}
+                  >
+                    <option value="">Select action</option>
+                    <option value="buy">Buy</option>
+                    <option value="sell">Sell</option>
+                  </select>
+                </label>
+                <label className="text-sm text-slate-600">
+                  Quantity
+                  <input
+                    className={inputClass}
+                    name="quantity"
+                    type="number"
+                    step="0.0001"
+                    min="0"
+                    value={editForm.quantity}
+                    onChange={handleEditChange}
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  Price
+                  <input
+                    className={inputClass}
+                    name="price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={editForm.price}
+                    onChange={handleEditChange}
+                  />
+                </label>
+                {investmentsError ? (
+                  <p className="text-sm text-rose-600">{investmentsError}</p>
+                ) : null}
+              </>
+            ) : null}
+            <label className="text-sm text-slate-600">
+              Date
+              <input
+                className={inputClass}
+                name="date"
+                type="date"
+                value={editForm.date}
+                onChange={handleEditChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Notes
+              <input
+                className={inputClass}
+                name="notes"
+                value={editForm.notes}
+                onChange={handleEditChange}
+                placeholder="Optional"
+              />
+            </label>
+            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <button
+                  type="button"
+                  onClick={handleEditCancel}
+                  className={ghostButtonClass}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+              </DialogClose>
+              <button
+                type="submit"
+                className={buttonClass}
+                disabled={saving || accounts.length === 0}
+              >
+                Save changes
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

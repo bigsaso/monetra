@@ -337,6 +337,7 @@ class CategoryBreakdownResponse(BaseModel):
 
 class MonthlyExpenseGroupResponse(BaseModel):
     month: str
+    income_total: Decimal
     needs_total: Decimal
     wants_total: Decimal
     investments_total: Decimal
@@ -640,6 +641,19 @@ def fetch_expense_group_totals(
         )
         totals[group] = total_decimal
     return totals
+
+
+def fetch_income_total(user_id: int, start_date: date, end_date: date) -> Decimal:
+    total_income_expr = func.coalesce(func.sum(transactions.c.amount), 0)
+    stmt = select(total_income_expr).where(
+        transactions.c.user_id == user_id,
+        transactions.c.type == "income",
+        transactions.c.date >= start_date,
+        transactions.c.date <= end_date,
+    )
+    with engine.begin() as conn:
+        total_value = conn.execute(stmt).scalar_one()
+    return total_value if isinstance(total_value, Decimal) else Decimal(str(total_value))
 
 
 @app.get("/health")
@@ -1244,9 +1258,21 @@ def list_transactions(
     conditions = [transactions.c.user_id == user_id]
     if account_id is not None:
         conditions.append(transactions.c.account_id == account_id)
+    join_stmt = transactions.outerjoin(
+        investment_entries,
+        (investment_entries.c.transaction_id == transactions.c.id)
+        & (investment_entries.c.user_id == transactions.c.user_id),
+    )
     with engine.begin() as conn:
         result = conn.execute(
-            select(transactions)
+            select(
+                transactions,
+                investment_entries.c.investment_id,
+                investment_entries.c.quantity,
+                investment_entries.c.price,
+                investment_entries.c.type.label("investment_type"),
+            )
+            .select_from(join_stmt)
             .where(*conditions)
             .order_by(transactions.c.date.desc(), transactions.c.id.desc())
         )
@@ -1261,6 +1287,10 @@ def list_transactions(
             category=row["category"],
             date=row["date"],
             notes=row["notes"],
+            investment_id=row["investment_id"],
+            quantity=row["quantity"],
+            price=row["price"],
+            investment_type=row["investment_type"],
         )
         for row in rows
     ]
@@ -1460,6 +1490,10 @@ def create_transaction(
         category=row["category"],
         date=row["date"],
         notes=row["notes"],
+        investment_id=investment_entry["investment_id"] if investment_entry else None,
+        quantity=investment_entry["quantity"] if investment_entry else None,
+        price=investment_entry["price"] if investment_entry else None,
+        investment_type=investment_entry["type"] if investment_entry else None,
     )
 
 
@@ -1565,6 +1599,10 @@ def update_transaction(
         category=row["category"],
         date=row["date"],
         notes=row["notes"],
+        investment_id=investment_entry["investment_id"] if investment_entry else None,
+        quantity=investment_entry["quantity"] if investment_entry else None,
+        price=investment_entry["price"] if investment_entry else None,
+        investment_type=investment_entry["type"] if investment_entry else None,
     )
 
 
@@ -1806,8 +1844,10 @@ def monthly_expense_groups(
     end_date = month_end(month_date)
 
     totals = fetch_expense_group_totals(user_id, start_date, end_date)
+    income_total = fetch_income_total(user_id, start_date, end_date)
     return MonthlyExpenseGroupResponse(
         month=month_date.strftime("%Y-%m"),
+        income_total=income_total,
         needs_total=totals["needs"],
         wants_total=totals["wants"],
         investments_total=totals["investments"],

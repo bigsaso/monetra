@@ -263,7 +263,7 @@ export default function DashboardClient({ userEmail }) {
           month={expenseGroupsMonth}
           onMonthChange={setExpenseGroupsMonth}
           title="Expense groups"
-          description="Needs, wants, and investments this month."
+          description="Needs, wants, investments, and savings this month."
         />
 
         <Card className="lg:col-span-8">

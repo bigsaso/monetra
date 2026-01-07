@@ -5,6 +5,15 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "../components/ui/dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -37,7 +46,9 @@ export default function PaySchedulesClient() {
   const [schedules, setSchedules] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [form, setForm] = useState(emptyForm);
+  const [editForm, setEditForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [isEditOpen, setIsEditOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [accountsLoading, setAccountsLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -139,20 +150,16 @@ export default function PaySchedulesClient() {
         account_id: Number(form.account_id),
         frequency: form.frequency
       };
-      const response = await fetch(
-        editingId ? `/api/pay-schedules/${editingId}` : "/api/pay-schedules",
-        {
-          method: editingId ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        }
-      );
+      const response = await fetch("/api/pay-schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data?.detail || "Failed to save pay schedule.");
       }
       setForm((prev) => ({ ...prev, amount: "", start_date: "" }));
-      setEditingId(null);
       await loadSchedules();
     } catch (err) {
       setError(err.message);
@@ -163,23 +170,73 @@ export default function PaySchedulesClient() {
 
   const handleEdit = (schedule) => {
     setEditingId(schedule.id);
-    setForm({
+    setError("");
+    setEditForm({
       amount: String(schedule.amount),
       start_date: schedule.start_date,
       account_id: String(schedule.account_id),
       frequency: schedule.frequency || "biweekly"
     });
+    setIsEditOpen(true);
   };
 
-  const handleCancel = () => {
+  const handleEditChange = (event) => {
+    const { name, value } = event.target;
+    setEditForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleEditSubmit = async (event) => {
+    event.preventDefault();
+    if (!editForm.amount || Number(editForm.amount) <= 0) {
+      setError("Enter a pay amount above $0.");
+      return;
+    }
+    if (!editForm.start_date || !isValidIsoDate(editForm.start_date)) {
+      setError("Enter a valid start date.");
+      return;
+    }
+    if (!editForm.account_id) {
+      setError("Select an account for this schedule.");
+      return;
+    }
+    if (!editForm.frequency) {
+      setError("Select a frequency for this schedule.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    try {
+      const payload = {
+        amount: Number(editForm.amount),
+        start_date: editForm.start_date,
+        account_id: Number(editForm.account_id),
+        frequency: editForm.frequency
+      };
+      const response = await fetch(`/api/pay-schedules/${editingId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to save pay schedule.");
+      }
+      setEditingId(null);
+      setIsEditOpen(false);
+      await loadSchedules();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditCancel = () => {
     setEditingId(null);
-    setForm((prev) => ({
-      ...prev,
-      amount: "",
-      start_date: "",
-      account_id: prev.account_id || "",
-      frequency: prev.frequency || "biweekly"
-    }));
+    setIsEditOpen(false);
+    setEditForm(emptyForm);
+    setError("");
   };
 
   const handleDelete = async (scheduleId) => {
@@ -219,9 +276,7 @@ export default function PaySchedulesClient() {
       <div className="mt-8 grid gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>
-              {editingId ? "Edit pay schedule" : "Add pay schedule"}
-            </CardTitle>
+            <CardTitle>Add pay schedule</CardTitle>
             <CardDescription>Keep recurring income organized.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -288,18 +343,8 @@ export default function PaySchedulesClient() {
                   disabled={saving}
                   className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {editingId ? "Save changes" : "Add schedule"}
+                  Add schedule
                 </button>
-                {editingId ? (
-                  <button
-                    type="button"
-                    onClick={handleCancel}
-                    disabled={saving}
-                    className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Cancel
-                  </button>
-                ) : null}
               </div>
             </form>
           </CardContent>
@@ -362,6 +407,99 @@ export default function PaySchedulesClient() {
           </CardContent>
         </Card>
       </div>
+      <Dialog
+        open={isEditOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleEditCancel();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Edit pay schedule</DialogTitle>
+            <DialogDescription>Adjust your recurring income details.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleEditSubmit} className="grid gap-4">
+            <label className="text-sm text-slate-600">
+              Amount
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="amount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={editForm.amount}
+                onChange={handleEditChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Start date
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="start_date"
+                type="date"
+                value={editForm.start_date}
+                onChange={handleEditChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Account
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="account_id"
+                value={editForm.account_id}
+                onChange={handleEditChange}
+                disabled={accountsLoading}
+              >
+                {accounts.length === 0 ? (
+                  <option value="">No accounts available</option>
+                ) : null}
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm text-slate-600">
+              Frequency
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="frequency"
+                value={editForm.frequency}
+                onChange={handleEditChange}
+              >
+                <option value="weekly">Weekly</option>
+                <option value="biweekly">Biweekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </label>
+            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <button
+                  type="button"
+                  onClick={handleEditCancel}
+                  disabled={saving}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </DialogClose>
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Save changes
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

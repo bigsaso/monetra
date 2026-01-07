@@ -37,7 +37,9 @@ const shiftMonth = (value, delta) => {
 const palette = {
   needs: "hsl(var(--chart-needs))",
   wants: "hsl(var(--chart-wants))",
-  investments: "hsl(var(--chart-investments))"
+  investments: "hsl(var(--chart-investments))",
+  savings: "hsl(var(--chart-savings))",
+  overbudget: "hsl(var(--chart-overbudget))"
 };
 
 const formatAmount = (value) => currencyFormatter.format(value);
@@ -64,7 +66,7 @@ export default function ExpenseGroupPieChart({
   month,
   onMonthChange,
   title = "Expense groups",
-  description = "Monthly needs, wants, and investments.",
+  description = "Monthly needs, wants, investments, and savings.",
   loading = false,
   error = "",
   className = ""
@@ -75,36 +77,64 @@ export default function ExpenseGroupPieChart({
   );
 
   const chartData = useMemo(() => {
+    const incomeTotal = Number(data?.income_total || 0);
     const needs = Number(data?.needs_total || 0);
     const wants = Number(data?.wants_total || 0);
     const investments = Number(data?.investments_total || 0);
-    const total = needs + wants + investments;
+    const expensesTotal = needs + wants + investments;
+    const savings = incomeTotal - expensesTotal;
+    const savingsValue = Math.max(0, savings);
+    const overbudgetValue = Math.max(0, -savings);
+
+    const groups = [
+      {
+        key: "needs",
+        label: "Needs",
+        value: needs,
+        color: palette.needs
+      },
+      {
+        key: "wants",
+        label: "Wants",
+        value: wants,
+        color: palette.wants
+      },
+      {
+        key: "investments",
+        label: "Investments",
+        value: investments,
+        color: palette.investments
+      }
+    ];
+
+    if (savingsValue > 0) {
+      groups.push({
+        key: "savings",
+        label: "Savings",
+        value: savingsValue,
+        color: palette.savings
+      });
+    } else if (overbudgetValue > 0) {
+      groups.push({
+        key: "overbudget",
+        label: "Overbudget",
+        value: overbudgetValue,
+        color: palette.overbudget
+      });
+    }
+
+    const total = groups.reduce((sum, item) => sum + item.value, 0);
+    const groupsWithPercentages = groups.map((item) => ({
+      ...item,
+      percentage: total ? (item.value / total) * 100 : 0
+    }));
 
     return {
       total,
-      groups: [
-        {
-          key: "needs",
-          label: "Needs",
-          value: needs,
-          percentage: total ? (needs / total) * 100 : 0,
-          color: palette.needs
-        },
-        {
-          key: "wants",
-          label: "Wants",
-          value: wants,
-          percentage: total ? (wants / total) * 100 : 0,
-          color: palette.wants
-        },
-        {
-          key: "investments",
-          label: "Investments",
-          value: investments,
-          percentage: total ? (investments / total) * 100 : 0,
-          color: palette.investments
-        }
-      ]
+      incomeTotal,
+      expensesTotal,
+      savings,
+      groups: groupsWithPercentages
     };
   }, [data]);
 
@@ -153,7 +183,9 @@ export default function ExpenseGroupPieChart({
         ) : error ? (
           <p className="text-sm text-rose-600">{error}</p>
         ) : chartData.total <= 0 ? (
-          <p className="text-sm text-slate-500">No expense data yet.</p>
+          <p className="text-sm text-slate-500">
+            No income or expense data yet.
+          </p>
         ) : (
           <div className="grid items-center gap-6 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]">
             <div className="w-full min-w-[220px]" role="img" aria-label={title}>

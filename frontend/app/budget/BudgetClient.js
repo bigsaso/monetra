@@ -6,6 +6,15 @@ import CategoryManagerModal from "../components/CategoryManagerModal";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "../components/ui/dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -34,7 +43,9 @@ export default function BudgetClient() {
   const [categories, setCategories] = useState([]);
   const [rules, setRules] = useState([]);
   const [form, setForm] = useState(buildEmptyForm([]));
+  const [editForm, setEditForm] = useState(buildEmptyForm([]));
   const [editingId, setEditingId] = useState(null);
+  const [isEditOpen, setIsEditOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [rulesLoading, setRulesLoading] = useState(true);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
@@ -176,6 +187,16 @@ export default function BudgetClient() {
     }
   }, [accounts, form.rule_type, form.account_id]);
 
+  useEffect(() => {
+    if (
+      editForm.rule_type === "account_cap" &&
+      accounts.length > 0 &&
+      !editForm.account_id
+    ) {
+      setEditForm((prev) => ({ ...prev, account_id: String(accounts[0].id) }));
+    }
+  }, [accounts, editForm.rule_type, editForm.account_id]);
+
   const accountLookup = useMemo(() => {
     return accounts.reduce((acc, account) => {
       acc[account.id] = account.name;
@@ -183,20 +204,21 @@ export default function BudgetClient() {
     }, {});
   }, [accounts]);
 
+  const applyRuleTypeChange = (prev, value) => {
+    const defaultCategory = getDefaultCategory(categories);
+    return {
+      ...prev,
+      rule_type: value,
+      category: value === "category_cap" ? prev.category || defaultCategory : "",
+      account_id: value === "account_cap" ? prev.account_id : ""
+    };
+  };
+
   const handleChange = (event) => {
     const { name, value } = event.target;
     setForm((prev) => {
       if (name === "rule_type") {
-        const defaultCategory = getDefaultCategory(categories);
-        return {
-          ...prev,
-          rule_type: value,
-          category:
-            value === "category_cap"
-              ? prev.category || defaultCategory
-              : "",
-          account_id: value === "account_cap" ? prev.account_id : ""
-        };
+        return applyRuleTypeChange(prev, value);
       }
       return { ...prev, [name]: value };
     });
@@ -227,26 +249,17 @@ export default function BudgetClient() {
         account_id:
           form.rule_type === "account_cap" ? Number(form.account_id || 0) : null
       };
-      const response = await fetch(
-        editingId ? `/api/budget/rules/${editingId}` : "/api/budget/rules",
-        {
-          method: editingId ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        }
-      );
+      const response = await fetch("/api/budget/rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data?.detail || "Failed to save budget rule.");
       }
-      setRules((prev) => {
-        if (editingId) {
-          return prev.map((rule) => (rule.id === editingId ? data : rule));
-        }
-        return [data, ...prev];
-      });
+      setRules((prev) => [data, ...prev]);
       setForm(buildEmptyForm(categories));
-      setEditingId(null);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -256,17 +269,76 @@ export default function BudgetClient() {
 
   const handleEdit = (rule) => {
     setEditingId(rule.id);
-    setForm({
+    setError("");
+    setEditForm({
       rule_type: rule.rule_type,
       amount: String(rule.amount),
       category: rule.category || getDefaultCategory(categories),
       account_id: rule.account_id ? String(rule.account_id) : ""
     });
+    setIsEditOpen(true);
   };
 
-  const handleCancel = () => {
+  const handleEditChange = (event) => {
+    const { name, value } = event.target;
+    setEditForm((prev) => {
+      if (name === "rule_type") {
+        return applyRuleTypeChange(prev, value);
+      }
+      return { ...prev, [name]: value };
+    });
+  };
+
+  const handleEditSubmit = async (event) => {
+    event.preventDefault();
+    if (!editForm.amount || Number(editForm.amount) <= 0) {
+      setError("Enter a budget amount above $0.");
+      return;
+    }
+    if (editForm.rule_type === "category_cap" && !editForm.category) {
+      setError("Select a category for this rule.");
+      return;
+    }
+    if (editForm.rule_type === "account_cap" && !editForm.account_id) {
+      setError("Select an account for this rule.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    try {
+      const payload = {
+        rule_type: editForm.rule_type,
+        amount: Number(editForm.amount),
+        category: editForm.rule_type === "category_cap" ? editForm.category : null,
+        account_id:
+          editForm.rule_type === "account_cap"
+            ? Number(editForm.account_id || 0)
+            : null
+      };
+      const response = await fetch(`/api/budget/rules/${editingId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to save budget rule.");
+      }
+      setRules((prev) => prev.map((rule) => (rule.id === editingId ? data : rule)));
+      setEditingId(null);
+      setIsEditOpen(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditCancel = () => {
     setEditingId(null);
-    setForm(buildEmptyForm(categories));
+    setIsEditOpen(false);
+    setEditForm(buildEmptyForm(categories));
     setError("");
   };
 
@@ -307,7 +379,7 @@ export default function BudgetClient() {
       <div className="mt-8 grid gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>{editingId ? "Edit rule" : "Create rule"}</CardTitle>
+            <CardTitle>Create rule</CardTitle>
             <CardDescription>Set guardrails for ongoing spending.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -409,18 +481,8 @@ export default function BudgetClient() {
                   disabled={saving || loading}
                   className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {editingId ? "Save changes" : "Add rule"}
+                  Add rule
                 </button>
-                {editingId ? (
-                  <button
-                    type="button"
-                    onClick={handleCancel}
-                    disabled={saving}
-                    className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Cancel
-                  </button>
-                ) : null}
               </div>
             </form>
           </CardContent>
@@ -498,6 +560,133 @@ export default function BudgetClient() {
           onDelete={deleteCategory}
         />
       ) : null}
+      <Dialog
+        open={isEditOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleEditCancel();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Edit rule</DialogTitle>
+            <DialogDescription>Update the details for this rule.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleEditSubmit} className="grid gap-4">
+            <label className="text-sm text-slate-600">
+              Rule type
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="rule_type"
+                value={editForm.rule_type}
+                onChange={handleEditChange}
+              >
+                {ruleTypeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm text-slate-600">
+              Amount
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="amount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={editForm.amount}
+                onChange={handleEditChange}
+                required
+              />
+            </label>
+            {editForm.rule_type === "category_cap" ? (
+              <label className="text-sm text-slate-600">
+                Category
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <select
+                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="category"
+                    value={editForm.category}
+                    onChange={handleEditChange}
+                    disabled={categoriesLoading}
+                  >
+                    {categories.length === 0 ? (
+                      <option value="">No categories available</option>
+                    ) : null}
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.name}>
+                        {category.name}
+                      </option>
+                    ))}
+                    {editForm.category &&
+                    !categories.some(
+                      (category) => category.name === editForm.category
+                    ) ? (
+                      <option value={editForm.category}>{editForm.category}</option>
+                    ) : null}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setShowCategoryModal(true)}
+                    className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                  >
+                    Add/manage categories
+                  </button>
+                </div>
+              </label>
+            ) : null}
+            {editForm.rule_type === "account_cap" ? (
+              <label className="text-sm text-slate-600">
+                Account
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="account_id"
+                  value={editForm.account_id}
+                  onChange={handleEditChange}
+                  disabled={accounts.length === 0}
+                  required
+                >
+                  {accounts.length === 0 ? (
+                    <option value="">No accounts available</option>
+                  ) : (
+                    accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+            ) : null}
+            {categoriesError ? (
+              <p className="text-sm text-rose-600">{categoriesError}</p>
+            ) : null}
+            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <button
+                  type="button"
+                  onClick={handleEditCancel}
+                  disabled={saving}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </DialogClose>
+              <button
+                type="submit"
+                disabled={saving || loading}
+                className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Save changes
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
