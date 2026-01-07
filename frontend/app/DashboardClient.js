@@ -4,10 +4,12 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import CategoryBreakdownChart from "./components/CategoryBreakdownChart";
 import ExpenseLineChart from "./components/ExpenseLineChart";
+import ExpenseGroupPieChart from "./components/ExpenseGroupPieChart";
 import MonthlyCashflowChart from "./components/MonthlyCashflowChart";
 import SignOutButton from "./components/SignOutButton";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
+import { useMonthlyExpenseGroups } from "../lib/useMonthlyExpenseGroups";
 import { useMonthlyTrends } from "../lib/useMonthlyTrends";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
@@ -35,11 +37,17 @@ export default function DashboardClient({ userEmail }) {
   const [error, setError] = useState("");
   const [budgetLoading, setBudgetLoading] = useState(true);
   const [budgetError, setBudgetError] = useState("");
+  const [expenseGroupsMonth, setExpenseGroupsMonth] = useState(null);
   const {
     data: monthlyTrends,
     loading: trendsLoading,
     error: trendsError
   } = useMonthlyTrends();
+  const {
+    data: expenseGroups,
+    loading: expenseGroupsLoading,
+    error: expenseGroupsError
+  } = useMonthlyExpenseGroups({ month: expenseGroupsMonth });
   const {
     data: categoryBreakdown,
     loading: breakdownLoading,
@@ -244,7 +252,18 @@ export default function DashboardClient({ userEmail }) {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-12">
+        <ExpenseGroupPieChart
+          className="lg:col-span-4"
+          data={expenseGroups}
+          loading={expenseGroupsLoading}
+          error={expenseGroupsError}
+          month={expenseGroupsMonth}
+          onMonthChange={setExpenseGroupsMonth}
+          title="Expense groups"
+          description="Needs, wants, and investments this month."
+        />
+
+        <Card className="lg:col-span-8">
           <CardHeader>
             <CardTitle>Budget overview</CardTitle>
             <CardDescription>
