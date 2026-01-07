@@ -3,6 +3,12 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --chart-needs: 148 38% 36%;
+    --chart-wants: 28 84% 52%;
+    --chart-investments: 210 34% 40%;
+  }
+
   body {
     font-family: "Space Grotesk", "Segoe UI", sans-serif;
     background: radial-gradient(

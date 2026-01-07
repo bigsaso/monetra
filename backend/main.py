@@ -297,6 +297,7 @@ class CategoryBreakdownResponse(BaseModel):
 
 
 class MonthlyExpenseGroupResponse(BaseModel):
+    month: str
     needs_total: Decimal
     wants_total: Decimal
     investments_total: Decimal
@@ -1452,6 +1453,7 @@ def monthly_expense_groups(
 
     totals = fetch_expense_group_totals(user_id, start_date, end_date)
     return MonthlyExpenseGroupResponse(
+        month=month_date.strftime("%Y-%m"),
         needs_total=totals["needs"],
         wants_total=totals["wants"],
         investments_total=totals["investments"],
