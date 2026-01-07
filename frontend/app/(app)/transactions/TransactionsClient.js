@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import CategoryManagerModal from "../components/CategoryManagerModal";
-import CsvImportPreviewModal from "../components/CsvImportPreviewModal";
-import InvestmentManagerModal from "../components/InvestmentManagerModal";
-import { Button } from "../components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import CategoryManagerModal from "../../components/CategoryManagerModal";
+import CsvImportPreviewModal from "../../components/CsvImportPreviewModal";
+import InvestmentManagerModal from "../../components/InvestmentManagerModal";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import {
   Dialog,
   DialogClose,
@@ -16,7 +16,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle
-} from "../components/ui/dialog";
+} from "../../components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -24,7 +24,7 @@ import {
   TableHead,
   TableHeader,
   TableRow
-} from "../components/ui/table";
+} from "../../components/ui/table";
 
 const buildEmptyForm = (dateValue) => ({
   account_id: "",

@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { redirect } from "next/navigation";
 import TransactionsClient from "./TransactionsClient";
-import { authOptions } from "../../lib/auth";
+import { authOptions } from "../../../lib/auth";
 
 export default async function TransactionsPage() {
   const session = await getServerSession(authOptions);
@@ -9,9 +9,5 @@ export default async function TransactionsPage() {
     redirect("/login");
   }
 
-  return (
-    <main>
-      <TransactionsClient />
-    </main>
-  );
+  return <TransactionsClient />;
 }

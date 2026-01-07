@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import Link from "next/link";
 import DashboardClient from "./DashboardClient";
+import AppShell from "./components/AppShell";
 import { authOptions } from "../lib/auth";
 
 export default async function Home() {
@@ -9,7 +10,9 @@ export default async function Home() {
   return (
     <>
       {session ? (
-        <DashboardClient userEmail={session.user.email} />
+        <AppShell>
+          <DashboardClient userEmail={session.user.email} />
+        </AppShell>
       ) : (
         <main
           style={{

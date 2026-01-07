@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { redirect } from "next/navigation";
 import InvestmentsClient from "./InvestmentsClient";
-import { authOptions } from "../../lib/auth";
+import { authOptions } from "../../../lib/auth";
 
 export default async function InvestmentsPage() {
   const session = await getServerSession(authOptions);
@@ -9,9 +9,5 @@ export default async function InvestmentsPage() {
     redirect("/login");
   }
 
-  return (
-    <main>
-      <InvestmentsClient />
-    </main>
-  );
+  return <InvestmentsClient />;
 }
