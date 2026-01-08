@@ -78,6 +78,7 @@ export default function ExpenseGroupPieChart({
   );
 
   const chartData = useMemo(() => {
+    // TODO: Merge projected totals once forecast data is available.
     const incomeTotal = Number(data?.income_total || 0);
     const needs = Number(data?.needs_total || 0);
     const wants = Number(data?.wants_total || 0);

@@ -45,6 +45,7 @@ export default function MonthlyCashflowChart({ data }) {
   const chartData = useMemo(
     () =>
       (data || []).map((item) => {
+        // TODO: Merge projected totals once forecast data is available.
         const income = Number(item.total_income || 0);
         const expenses = Number(item.total_expenses || 0);
         const net = Number(item.net_cashflow || 0);

@@ -340,6 +340,8 @@ class MonthlyTrendResponse(BaseModel):
     total_income: Decimal
     total_expenses: Decimal
     net_cashflow: Decimal
+    projected_total_income: Decimal | None = None
+    projected_total_expenses: Decimal | None = None
 
 
 class CategoryBreakdownResponse(BaseModel):
@@ -354,6 +356,8 @@ class MonthlyExpenseGroupResponse(BaseModel):
     needs_total: Decimal
     wants_total: Decimal
     investments_total: Decimal
+    projected_total_income: Decimal | None = None
+    projected_total_expenses: Decimal | None = None
 
 
 class IncomeProjectionEntry(BaseModel):
@@ -1811,7 +1815,11 @@ def recurring_projections(
     return projections
 
 
-@app.get("/reports/monthly-trends", response_model=list[MonthlyTrendResponse])
+@app.get(
+    "/reports/monthly-trends",
+    response_model=list[MonthlyTrendResponse],
+    response_model_exclude_none=True,
+)
 def monthly_trends(
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
@@ -1857,6 +1865,7 @@ def monthly_trends(
         }
         for row in rows
     }
+    # TODO: Merge projected totals from recurring schedules once forecast pipeline lands.
 
     results: list[MonthlyTrendResponse] = []
     for month_value in iter_months(start_date, end_date):
@@ -1940,7 +1949,11 @@ def category_breakdown(
     return results
 
 
-@app.get("/reports/monthly-expense-groups", response_model=MonthlyExpenseGroupResponse)
+@app.get(
+    "/reports/monthly-expense-groups",
+    response_model=MonthlyExpenseGroupResponse,
+    response_model_exclude_none=True,
+)
 def monthly_expense_groups(
     month: str | None = Query(None),
     x_user_id: str | None = Header(None, alias="x-user-id"),
@@ -1957,6 +1970,7 @@ def monthly_expense_groups(
 
     totals = fetch_expense_group_totals(user_id, start_date, end_date)
     income_total = fetch_income_total(user_id, start_date, end_date)
+    # TODO: Merge projected income/expense totals once forecast pipeline lands.
     return MonthlyExpenseGroupResponse(
         month=month_date.strftime("%Y-%m"),
         income_total=income_total,
