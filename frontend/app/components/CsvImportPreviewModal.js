@@ -2,7 +2,6 @@
 
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -208,11 +207,6 @@ export default function CsvImportPreviewModal({
             {accountName ? `Importing to ${accountName}` : "Account required"}
           </span>
           <div className="flex flex-wrap gap-2">
-            <DialogClose asChild>
-              <button type="button" className={ghostButtonClass}>
-                Done reviewing
-              </button>
-            </DialogClose>
             <button
               type="button"
               onClick={onConfirm}
