@@ -25,9 +25,66 @@ const RESOLUTIONS = [
   { value: "yearly", label: "Yearly" }
 ];
 
+const TIMEFRAMES = [
+  { value: "1W", label: "1W" },
+  { value: "1M", label: "1M" },
+  { value: "3M", label: "3M" },
+  { value: "6M", label: "6M" },
+  { value: "YTD", label: "YTD" },
+  { value: "1Y", label: "1Y" },
+  { value: "2Y", label: "2Y" },
+  { value: "5Y", label: "5Y" }
+];
+
 const pad = (value) => String(value).padStart(2, "0");
 
 const parseDate = (value) => new Date(`${value}T00:00:00`);
+
+const startOfDay = (date) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+const getTimeframeStart = (endDate, timeframe) => {
+  const start = startOfDay(endDate);
+  if (timeframe === "1W") {
+    start.setDate(start.getDate() - 6);
+    return start;
+  }
+  if (timeframe === "1M") {
+    start.setMonth(start.getMonth() - 1);
+    return start;
+  }
+  if (timeframe === "3M") {
+    start.setMonth(start.getMonth() - 3);
+    return start;
+  }
+  if (timeframe === "6M") {
+    start.setMonth(start.getMonth() - 6);
+    return start;
+  }
+  if (timeframe === "YTD") {
+    return new Date(start.getFullYear(), 0, 1);
+  }
+  if (timeframe === "1Y") {
+    start.setFullYear(start.getFullYear() - 1);
+    return start;
+  }
+  if (timeframe === "2Y") {
+    start.setFullYear(start.getFullYear() - 2);
+    return start;
+  }
+  if (timeframe === "5Y") {
+    start.setFullYear(start.getFullYear() - 5);
+    return start;
+  }
+  return start;
+};
+
+const getDayCount = (startDate, endDate) => {
+  const start = startOfDay(startDate);
+  const end = startOfDay(endDate);
+  const diffMs = end.getTime() - start.getTime();
+  return Math.max(1, Math.round(diffMs / 86400000) + 1);
+};
 
 const getBucketStart = (date, resolution) => {
   const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -107,6 +164,7 @@ export default function ExpenseLineChart({
   const [chartLoading, setChartLoading] = useState(true);
   const [error, setError] = useState("");
   const [resolution, setResolution] = useState("daily");
+  const [timeframe, setTimeframe] = useState("1Y");
   const [selectedAccountId, setSelectedAccountId] = useState(
     normalizeId(account_id)
   );
@@ -191,11 +249,30 @@ export default function ExpenseLineChart({
       return { series: [] };
     }
 
-    const totals = new Map();
-    let minDate = null;
     let maxDate = null;
-
     expenseTransactions.forEach((transaction) => {
+      const date = parseDate(transaction.date);
+      if (!maxDate || date > maxDate) maxDate = date;
+    });
+
+    if (!maxDate) {
+      return { series: [] };
+    }
+
+    const rangeStart = getTimeframeStart(maxDate, timeframe);
+    const filteredTransactions = expenseTransactions.filter((transaction) => {
+      const date = parseDate(transaction.date);
+      return date >= rangeStart;
+    });
+
+    if (!filteredTransactions.length) {
+      return { series: [] };
+    }
+
+    const totals = new Map();
+    let amountTotal = 0;
+
+    filteredTransactions.forEach((transaction) => {
       const date = parseDate(transaction.date);
       const bucketStart = getBucketStart(date, resolution);
       const key = formatBucketKey(bucketStart, resolution);
@@ -205,29 +282,28 @@ export default function ExpenseLineChart({
       };
       existing.total += Number(transaction.amount || 0);
       totals.set(key, existing);
-      if (!minDate || date < minDate) minDate = date;
-      if (!maxDate || date > maxDate) maxDate = date;
+      amountTotal += Number(transaction.amount || 0);
     });
 
-    if (!minDate || !maxDate) {
-      return { series: [] };
-    }
+    const dayCount = getDayCount(rangeStart, maxDate);
+    const averageDaily = dayCount ? amountTotal / dayCount : 0;
 
     const seriesData = [];
-    let cursor = getBucketStart(minDate, resolution);
+    let cursor = getBucketStart(rangeStart, resolution);
     const end = getBucketStart(maxDate, resolution);
     while (cursor.getTime() <= end.getTime()) {
       const key = formatBucketKey(cursor, resolution);
       const entry = totals.get(key);
       seriesData.push({
         label: formatBucketLabel(cursor, resolution),
-        total: entry ? entry.total : 0
+        total: entry ? entry.total : 0,
+        average: averageDaily
       });
       cursor = addInterval(cursor, resolution);
     }
 
     return { series: seriesData };
-  }, [accountIds, resolution, accountTransactions]);
+  }, [accountIds, resolution, timeframe, accountTransactions]);
 
   useEffect(() => {
     let isMounted = true;
@@ -320,6 +396,20 @@ export default function ExpenseLineChart({
                   ))}
                 </select>
               </label>
+              <label className="text-xs uppercase tracking-[0.12em] text-slate-500">
+                Timeframe
+                <select
+                  className={selectClass}
+                  value={timeframe}
+                  onChange={(event) => setTimeframe(event.target.value)}
+                >
+                  {TIMEFRAMES.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
           </div>
 
@@ -358,13 +448,23 @@ export default function ExpenseLineChart({
                     <Tooltip
                       content={({ active, payload, label }) => {
                         if (!active || !payload?.length) return null;
-                        const value = payload[0]?.value ?? 0;
+                        const totalEntry = payload.find(
+                          (item) => item.dataKey === "total"
+                        );
+                        const averageEntry = payload.find(
+                          (item) => item.dataKey === "average"
+                        );
+                        const totalValue = totalEntry?.value ?? 0;
+                        const averageValue = averageEntry?.value ?? 0;
                         return (
                           <div className="rounded-lg border border-slate-200 bg-white/95 p-2 text-xs text-slate-700 shadow-lg">
                             <p className="mb-1 text-xs font-semibold text-slate-900">
                               {label}
                             </p>
-                            <p>{currencyFormatter.format(value)}</p>
+                            <p>{currencyFormatter.format(totalValue)}</p>
+                            <p className="text-slate-500">
+                              Avg/day: {currencyFormatter.format(averageValue)}
+                            </p>
                           </div>
                         );
                       }}
@@ -376,7 +476,16 @@ export default function ExpenseLineChart({
                       dataKey="total"
                       stroke="#2e2f33"
                       strokeWidth={2}
-                      dot={{ r: 3, fill: "#2e2f33" }}
+                      dot={false}
+                      activeDot={{ r: 4, fill: "#2e2f33" }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="average"
+                      stroke="#8a8f98"
+                      strokeDasharray="4 4"
+                      strokeWidth={2}
+                      dot={false}
                     />
                   </LineChart>
                 </ResponsiveContainer>
