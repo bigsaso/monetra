@@ -121,6 +121,7 @@ pay_schedules = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
     Column("amount", Numeric(12, 2), nullable=False),
+    Column("kind", String(20), nullable=False, server_default="income"),
     Column("frequency", String(50), nullable=False),
     Column("start_date", Date, nullable=False),
     Column("account_id", Integer, ForeignKey("accounts.id"), nullable=False),
@@ -187,6 +188,17 @@ class TransactionType:
         normalized = value.strip().lower()
         if normalized not in cls.values:
             raise ValueError("Invalid transaction type.")
+        return normalized
+
+
+class RecurringScheduleKind:
+    values = {"income", "expense", "investment"}
+
+    @classmethod
+    def validate(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in cls.values:
+            raise ValueError("Invalid recurring schedule kind.")
         return normalized
 
 
@@ -362,6 +374,7 @@ class RecurringSchedulePayload(BaseModel):
     start_date: date
     account_id: int
     frequency: str | None = "biweekly"
+    kind: str = "income"
 
     @classmethod
     def validate_payload(
@@ -373,6 +386,7 @@ class RecurringSchedulePayload(BaseModel):
         if normalized not in {"weekly", "biweekly", "monthly"}:
             raise ValueError("Only weekly, biweekly, or monthly schedules are supported.")
         payload.frequency = normalized
+        payload.kind = RecurringScheduleKind.validate(payload.kind or "income")
         return payload
 
 
@@ -383,6 +397,7 @@ class RecurringScheduleResponse(BaseModel):
     start_date: date
     account_id: int
     frequency: str
+    kind: str
     created_at: datetime | None = None
 
 
@@ -1128,6 +1143,7 @@ def list_recurring_schedules(
             start_date=row["start_date"],
             account_id=row["account_id"],
             frequency=row["frequency"],
+            kind=row["kind"],
             created_at=row["created_at"],
         )
         for row in rows
@@ -1156,6 +1172,7 @@ def create_recurring_schedule(
             .values(
                 user_id=user_id,
                 amount=payload.amount,
+                kind=payload.kind,
                 start_date=payload.start_date,
                 account_id=payload.account_id,
                 frequency=payload.frequency,
@@ -1164,6 +1181,7 @@ def create_recurring_schedule(
                 pay_schedules.c.id,
                 pay_schedules.c.user_id,
                 pay_schedules.c.amount,
+                pay_schedules.c.kind,
                 pay_schedules.c.start_date,
                 pay_schedules.c.account_id,
                 pay_schedules.c.frequency,
@@ -1181,6 +1199,7 @@ def create_recurring_schedule(
         start_date=row["start_date"],
         account_id=row["account_id"],
         frequency=row["frequency"],
+        kind=row["kind"],
         created_at=row["created_at"],
     )
 
@@ -1211,11 +1230,13 @@ def update_recurring_schedule(
                 start_date=payload.start_date,
                 account_id=payload.account_id,
                 frequency=payload.frequency,
+                kind=payload.kind,
             )
             .returning(
                 pay_schedules.c.id,
                 pay_schedules.c.user_id,
                 pay_schedules.c.amount,
+                pay_schedules.c.kind,
                 pay_schedules.c.start_date,
                 pay_schedules.c.account_id,
                 pay_schedules.c.frequency,
@@ -1233,6 +1254,7 @@ def update_recurring_schedule(
         start_date=row["start_date"],
         account_id=row["account_id"],
         frequency=row["frequency"],
+        kind=row["kind"],
         created_at=row["created_at"],
     )
 
@@ -1653,7 +1675,10 @@ def income_projections(
                 pay_schedules.c.start_date,
                 pay_schedules.c.account_id,
                 pay_schedules.c.frequency,
-            ).where(pay_schedules.c.user_id == user_id)
+            ).where(
+                pay_schedules.c.user_id == user_id,
+                pay_schedules.c.kind == "income",
+            )
         ).mappings().all()
 
     actual_entries = [

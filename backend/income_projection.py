@@ -17,6 +17,7 @@ class RecurringSchedule:
     start_date: date
     account_id: int
     frequency: str = "biweekly"
+    kind: str = "income"
 
 
 @dataclass(frozen=True)
