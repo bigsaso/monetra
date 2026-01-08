@@ -81,7 +81,7 @@ export default function CsvImportPreviewModal({
         <DialogHeader>
           <DialogTitle>Preview CSV import</DialogTitle>
           <DialogDescription>
-            {rows.length} expenses ready to review.
+            {rows.length} transactions ready to review.
           </DialogDescription>
         </DialogHeader>
 
@@ -135,7 +135,7 @@ export default function CsvImportPreviewModal({
         ) : null}
         {!hasAccount ? (
           <p className="text-sm text-rose-600">
-            Select an account before importing expenses.
+            Select an account before importing transactions.
           </p>
         ) : null}
 
@@ -219,7 +219,7 @@ export default function CsvImportPreviewModal({
               disabled={confirmDisabled}
               className={buttonClass}
             >
-              {isImporting ? "Importing..." : "Import expenses"}
+              {isImporting ? "Importing..." : "Import transactions"}
             </button>
           </div>
         </DialogFooter>

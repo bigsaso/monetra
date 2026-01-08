@@ -887,9 +887,9 @@ export default function TransactionsClient() {
         return;
       }
       const amountValue = normalizeAmount(row.amount);
-      if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      if (!Number.isFinite(amountValue) || amountValue === 0) {
         setImportCommitError(
-          `Row ${index + 1} has an invalid amount. Use a positive number.`
+          `Row ${index + 1} has an invalid amount. Use a non-zero number.`
         );
         return;
       }
@@ -919,7 +919,7 @@ export default function TransactionsClient() {
       await loadData();
       handleCloseImportModal();
       setImportSuccess(
-        `Imported ${data?.inserted_count || importRows.length} expenses.`
+        `Imported ${data?.inserted_count || importRows.length} transactions.`
       );
     } catch (err) {
       setImportCommitError(err.message);
@@ -1155,9 +1155,9 @@ export default function TransactionsClient() {
 
         <Card className="flex-[1_1_260px]">
           <CardHeader>
-            <CardTitle>Import expenses</CardTitle>
+            <CardTitle>Import transactions</CardTitle>
             <CardDescription>
-              Upload a CSV to preview expenses before saving.
+              Upload a CSV to preview transactions before saving.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">

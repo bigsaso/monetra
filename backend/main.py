@@ -1375,19 +1375,21 @@ def commit_transaction_import(
                 status_code=400,
                 detail=f"Row {index} is missing a category.",
             )
-        if row.amount <= 0:
+        if row.amount == 0:
             raise HTTPException(
                 status_code=400,
-                detail=f"Row {index} must be a positive expense amount.",
+                detail=f"Row {index} must be a non-zero amount.",
             )
 
         account_id = row.account_id if row.account_id is not None else payload.account_id
+        txn_type = "income" if row.amount < 0 else "expense"
+        amount_value = abs(row.amount)
         insert_rows.append(
             {
                 "user_id": user_id,
                 "account_id": account_id,
-                "amount": row.amount,
-                "type": "expense",
+                "amount": amount_value,
+                "type": txn_type,
                 "category": category,
                 "date": row.date,
                 "notes": notes or None,
