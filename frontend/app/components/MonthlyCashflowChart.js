@@ -22,49 +22,86 @@ const formatAmount = (value) => currencyFormatter.format(value);
 
 const formatMonthLabel = (value) => value || "-";
 
+const toMonthKey = (value) =>
+  `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}`;
+
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
-  const data = payload.reduce((acc, entry) => {
-    acc[entry.dataKey] = entry.value;
-    return acc;
-  }, {});
+  const data = payload[0]?.payload || {};
+  const hasProjected =
+    Number(data.projectedIncome || 0) > 0 || Number(data.projectedExpenses || 0) > 0;
+  const projectedNet =
+    Number(data.projectedIncome || 0) - Number(data.projectedExpenses || 0);
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white/95 p-2 text-xs text-slate-700 shadow-lg">
       <p className="mb-1 text-xs font-semibold text-slate-900">
         {formatMonthLabel(label)}
       </p>
-      <p>Income: {formatAmount(data.income || 0)}</p>
-      <p>Expenses: {formatAmount(data.expenses || 0)}</p>
-      {data.projectedIncome ? (
-        <p>Projected income: {formatAmount(data.projectedIncome)}</p>
+      <p>Actual income: {formatAmount(data.income || 0)}</p>
+      <p>Actual expenses: {formatAmount(data.expenses || 0)}</p>
+      <p>Actual net: {formatAmount(data.net || 0)}</p>
+      {hasProjected ? (
+        <p>Projected income: {formatAmount(data.projectedIncome || 0)}</p>
       ) : null}
-      {data.projectedExpenses ? (
-        <p>Projected expenses: {formatAmount(data.projectedExpenses)}</p>
+      {hasProjected ? (
+        <p>Projected expenses: {formatAmount(data.projectedExpenses || 0)}</p>
       ) : null}
-      <p>Net: {formatAmount(data.net || 0)}</p>
+      {hasProjected ? <p>Projected net: {formatAmount(projectedNet)}</p> : null}
     </div>
   );
 };
 
 export default function MonthlyCashflowChart({ data }) {
   const chartData = useMemo(
-    () =>
-      (data || []).map((item) => {
+    () => {
+      const today = new Date();
+      const currentMonthKey = toMonthKey(today);
+      const nextMonthKey = toMonthKey(
+        new Date(today.getFullYear(), today.getMonth() + 1, 1)
+      );
+
+      return (data || []).map((item) => {
         const income = Number(item.total_income || 0);
         const expenses = Number(item.total_expenses || 0);
         const net = Number(item.net_cashflow || 0);
-        const projectedIncome = Number(item.projected_total_income || 0);
-        const projectedExpenses = Number(item.projected_total_expenses || 0);
+        const projectedIncomeCurrentRaw =
+          item.month === currentMonthKey
+            ? Number(item.projected_total_income_current_month || 0)
+            : 0;
+        const projectedExpensesCurrentRaw =
+          item.month === currentMonthKey
+            ? Number(item.projected_total_expenses_current_month || 0)
+            : 0;
+        const projectedIncomeNext =
+          item.month === nextMonthKey
+            ? Number(item.projected_total_income || 0)
+            : 0;
+        const projectedExpensesNext =
+          item.month === nextMonthKey
+            ? Number(item.projected_total_expenses || 0)
+            : 0;
+        const projectedIncomeTotal =
+          item.month === currentMonthKey
+            ? projectedIncomeCurrentRaw
+            : projectedIncomeNext;
+        const projectedExpensesTotal =
+          item.month === currentMonthKey
+            ? projectedExpensesCurrentRaw
+            : projectedExpensesNext;
+
         return {
           month: item.month,
           income,
           expenses,
           net,
-          projectedIncome,
-          projectedExpenses
+          incomeProjectedRemainder: Math.max(projectedIncomeTotal - income, 0),
+          expensesProjectedRemainder: Math.max(projectedExpensesTotal - expenses, 0),
+          projectedIncome: projectedIncomeTotal,
+          projectedExpenses: projectedExpensesTotal
         };
-      }),
+      });
+    },
     [data]
   );
 
@@ -101,19 +138,33 @@ export default function MonthlyCashflowChart({ data }) {
               wrapperStyle={{ outline: "none" }}
             />
             <ReferenceLine y={0} stroke="rgba(34, 37, 43, 0.2)" strokeWidth={1.2} />
-            <Bar dataKey="income" fill="#1f7a4d" radius={[4, 4, 0, 0]} barSize={18} />
-            <Bar dataKey="expenses" fill="#b23a3a" radius={[4, 4, 0, 0]} barSize={18} />
             <Bar
-              dataKey="projectedIncome"
-              fill="rgba(31, 122, 77, 0.35)"
+              dataKey="income"
+              fill="#1f7a4d"
               radius={[4, 4, 0, 0]}
-              barSize={12}
+              barSize={18}
+              stackId="income"
             />
             <Bar
-              dataKey="projectedExpenses"
+              dataKey="incomeProjectedRemainder"
+              fill="rgba(31, 122, 77, 0.35)"
+              radius={[4, 4, 0, 0]}
+              barSize={18}
+              stackId="income"
+            />
+            <Bar
+              dataKey="expenses"
+              fill="#b23a3a"
+              radius={[4, 4, 0, 0]}
+              barSize={18}
+              stackId="expenses"
+            />
+            <Bar
+              dataKey="expensesProjectedRemainder"
               fill="rgba(178, 58, 58, 0.35)"
               radius={[4, 4, 0, 0]}
-              barSize={12}
+              barSize={18}
+              stackId="expenses"
             />
             <Line
               type="monotone"

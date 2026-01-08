@@ -10,6 +10,8 @@ import { useEffect, useState } from "react";
  * @property {number|string} net_cashflow
  * @property {number|string=} projected_total_income
  * @property {number|string=} projected_total_expenses
+ * @property {number|string=} projected_total_income_current_month
+ * @property {number|string=} projected_total_expenses_current_month
  */
 
 /**

@@ -343,6 +343,8 @@ class MonthlyTrendResponse(BaseModel):
     net_cashflow: Decimal
     projected_total_income: Decimal | None = None
     projected_total_expenses: Decimal | None = None
+    projected_total_income_current_month: Decimal | None = None
+    projected_total_expenses_current_month: Decimal | None = None
 
 
 class NetFlowSummaryResponse(BaseModel):
@@ -1926,9 +1928,18 @@ def monthly_trends(
         for row in rows
     }
     projected_totals_by_month: dict[str, dict[str, Decimal]] = {}
+    projected_current_month_by_month: dict[str, dict[str, Decimal]] = {}
     next_month_start = shift_month(month_start(today), 1)
     next_month_end = month_end(next_month_start)
-    if next_month_start <= end_date and next_month_end >= start_date:
+    current_month_start = month_start(today)
+    current_month_end = month_end(current_month_start)
+
+    def normalize_amount(value: Decimal | float | int | str) -> Decimal:
+        return value if isinstance(value, Decimal) else Decimal(str(value))
+
+    def projected_totals_for_range(
+        range_start: date, range_end: date
+    ) -> dict[str, Decimal]:
         with engine.begin() as conn:
             schedule_rows = conn.execute(
                 select(
@@ -1943,48 +1954,13 @@ def monthly_trends(
                     pay_schedules.c.kind.in_(("income", "expense")),
                 )
             ).mappings().all()
-            actual_rows = conn.execute(
-                select(
-                    transactions.c.date,
-                    transactions.c.account_id,
-                    transactions.c.type,
-                    transactions.c.amount,
-                ).where(
-                    transactions.c.user_id == user_id,
-                    transactions.c.type.in_(("income", "expense")),
-                    transactions.c.date >= next_month_start,
-                    transactions.c.date <= next_month_end,
-                )
-            ).mappings().all()
-
-        existing_transactions = [
-            ActualTransaction(
-                date=row["date"],
-                account_id=row["account_id"],
-                type=row["type"],
-            )
-            for row in actual_rows
-        ]
-
-        def normalize_amount(value: Decimal | float | int | str) -> Decimal:
-            return value if isinstance(value, Decimal) else Decimal(str(value))
-
-        actual_month_index = {
-            (
-                row["account_id"],
-                row["type"],
-                normalize_amount(row["amount"]),
-            )
-            for row in actual_rows
-        }
+        existing_transactions: list[ActualTransaction] = []
 
         projected_income = Decimal("0")
         projected_expenses = Decimal("0")
         for row in schedule_rows:
             schedule_amount = normalize_amount(row["amount"])
             schedule_kind = row["kind"].strip().lower()
-            if (row["account_id"], schedule_kind, schedule_amount) in actual_month_index:
-                continue
             schedule = RecurringSchedule(
                 amount=schedule_amount,
                 start_date=row["start_date"],
@@ -1995,8 +1971,8 @@ def monthly_trends(
             try:
                 schedule_projections = project_recurring_schedule(
                     schedule,
-                    next_month_start,
-                    next_month_end,
+                    range_start,
+                    range_end,
                     existing_transactions,
                 )
             except ValueError as exc:
@@ -2008,10 +1984,27 @@ def monthly_trends(
                     projected_expenses += projection.amount
 
         if projected_income > 0 or projected_expenses > 0:
-            projected_totals_by_month[next_month_start.strftime("%Y-%m")] = {
+            return {
                 "income": projected_income,
                 "expenses": projected_expenses,
             }
+        return {}
+
+    if current_month_start <= end_date and current_month_end >= start_date:
+        projected_current_totals = projected_totals_for_range(
+            current_month_start, current_month_end
+        )
+        if projected_current_totals:
+            projected_current_month_by_month[current_month_start.strftime("%Y-%m")] = (
+                projected_current_totals
+            )
+
+    if next_month_start <= end_date and next_month_end >= start_date:
+        projected_next_totals = projected_totals_for_range(next_month_start, next_month_end)
+        if projected_next_totals:
+            projected_totals_by_month[next_month_start.strftime("%Y-%m")] = (
+                projected_next_totals
+            )
 
     results: list[MonthlyTrendResponse] = []
     for month_value in iter_months(start_date, end_date):
@@ -2022,6 +2015,9 @@ def monthly_trends(
         projected_totals = projected_totals_by_month.get(key, {})
         projected_income = projected_totals.get("income")
         projected_expenses = projected_totals.get("expenses")
+        projected_current_totals = projected_current_month_by_month.get(key, {})
+        projected_current_income = projected_current_totals.get("income")
+        projected_current_expenses = projected_current_totals.get("expenses")
         results.append(
             MonthlyTrendResponse(
                 month=key,
@@ -2030,6 +2026,12 @@ def monthly_trends(
                 net_cashflow=income - expenses,
                 projected_total_income=projected_income if projected_income else None,
                 projected_total_expenses=projected_expenses if projected_expenses else None,
+                projected_total_income_current_month=(
+                    projected_current_income if projected_current_income else None
+                ),
+                projected_total_expenses_current_month=(
+                    projected_current_expenses if projected_current_expenses else None
+                ),
             )
         )
     return results
