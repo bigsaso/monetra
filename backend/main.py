@@ -29,6 +29,7 @@ from sqlalchemy.exc import IntegrityError
 from backend.budget_engine import BudgetRule, Transaction, evaluate_budget
 from backend.csv_parser import CSVParseResult, ParsedTransaction, parse_transactions_csv
 from backend.income_projection import IncomeTransaction, RecurringSchedule, project_income
+from backend.recurring_projection import ActualTransaction, project_recurring_schedule
 
 app = FastAPI()
 
@@ -359,6 +360,14 @@ class IncomeProjectionEntry(BaseModel):
     date: date
     amount: Decimal
     account_id: int
+    source: str
+
+
+class RecurringProjectionEntry(BaseModel):
+    date: date
+    amount: Decimal
+    kind: str
+    schedule_id: int
     source: str
 
 
@@ -1727,6 +1736,79 @@ def income_projections(
     entries = actual_entries + projected_entries
     entries.sort(key=lambda entry: (entry.date, 0 if entry.source == "actual" else 1))
     return entries
+
+
+@app.get("/recurring/projections", response_model=list[RecurringProjectionEntry])
+def recurring_projections(
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[RecurringProjectionEntry]:
+    user_id = get_user_id(x_user_id)
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="Start date must be on or before end date.")
+
+    with engine.begin() as conn:
+        existing_rows = conn.execute(
+            select(
+                transactions.c.date,
+                transactions.c.account_id,
+                transactions.c.type,
+            ).where(
+                transactions.c.user_id == user_id,
+                transactions.c.type.in_(("income", "expense", "investment")),
+                transactions.c.date >= start_date,
+                transactions.c.date <= end_date,
+            )
+        ).mappings().all()
+        schedule_rows = conn.execute(
+            select(
+                pay_schedules.c.id,
+                pay_schedules.c.amount,
+                pay_schedules.c.start_date,
+                pay_schedules.c.account_id,
+                pay_schedules.c.frequency,
+                pay_schedules.c.kind,
+            ).where(pay_schedules.c.user_id == user_id)
+        ).mappings().all()
+
+    existing_transactions = [
+        ActualTransaction(
+            date=row["date"],
+            account_id=row["account_id"],
+            type=row["type"],
+        )
+        for row in existing_rows
+    ]
+
+    projections: list[RecurringProjectionEntry] = []
+    for row in schedule_rows:
+        schedule = RecurringSchedule(
+            amount=row["amount"],
+            start_date=row["start_date"],
+            account_id=row["account_id"],
+            frequency=row["frequency"],
+            kind=row["kind"],
+        )
+        try:
+            schedule_projections = project_recurring_schedule(
+                schedule, start_date, end_date, existing_transactions
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        projections.extend(
+            RecurringProjectionEntry(
+                date=projection.date,
+                amount=projection.amount,
+                kind=row["kind"],
+                schedule_id=row["id"],
+                source=projection.source,
+            )
+            for projection in schedule_projections
+        )
+
+    projections.sort(key=lambda entry: (entry.date, entry.schedule_id))
+    return projections
 
 
 @app.get("/reports/monthly-trends", response_model=list[MonthlyTrendResponse])
