@@ -1,0 +1,2 @@
+ALTER TABLE pay_schedules
+ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'income';
