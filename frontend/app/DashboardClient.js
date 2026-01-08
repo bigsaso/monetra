@@ -76,11 +76,21 @@ export default function DashboardClient() {
   const [expenseSummaryMonth, setExpenseSummaryMonth] = useState(() =>
     formatMonthValue(new Date())
   );
+  const nextMonthEndDate = useMemo(() => {
+    const today = new Date();
+    const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const nextMonthEnd = new Date(
+      nextMonthStart.getFullYear(),
+      nextMonthStart.getMonth() + 1,
+      0
+    );
+    return formatDateValue(nextMonthEnd);
+  }, []);
   const {
     data: monthlyTrends,
     loading: trendsLoading,
     error: trendsError
-  } = useMonthlyTrends();
+  } = useMonthlyTrends({ endDate: nextMonthEndDate });
   const {
     data: expenseSummaryGroups,
     loading: expenseSummaryGroupsLoading,

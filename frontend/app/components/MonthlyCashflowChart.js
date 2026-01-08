@@ -36,6 +36,12 @@ const CustomTooltip = ({ active, payload, label }) => {
       </p>
       <p>Income: {formatAmount(data.income || 0)}</p>
       <p>Expenses: {formatAmount(data.expenses || 0)}</p>
+      {data.projectedIncome ? (
+        <p>Projected income: {formatAmount(data.projectedIncome)}</p>
+      ) : null}
+      {data.projectedExpenses ? (
+        <p>Projected expenses: {formatAmount(data.projectedExpenses)}</p>
+      ) : null}
       <p>Net: {formatAmount(data.net || 0)}</p>
     </div>
   );
@@ -45,15 +51,18 @@ export default function MonthlyCashflowChart({ data }) {
   const chartData = useMemo(
     () =>
       (data || []).map((item) => {
-        // TODO: Merge projected totals once forecast data is available.
         const income = Number(item.total_income || 0);
         const expenses = Number(item.total_expenses || 0);
         const net = Number(item.net_cashflow || 0);
+        const projectedIncome = Number(item.projected_total_income || 0);
+        const projectedExpenses = Number(item.projected_total_expenses || 0);
         return {
           month: item.month,
           income,
           expenses,
-          net
+          net,
+          projectedIncome,
+          projectedExpenses
         };
       }),
     [data]
@@ -94,6 +103,18 @@ export default function MonthlyCashflowChart({ data }) {
             <ReferenceLine y={0} stroke="rgba(34, 37, 43, 0.2)" strokeWidth={1.2} />
             <Bar dataKey="income" fill="#1f7a4d" radius={[4, 4, 0, 0]} barSize={18} />
             <Bar dataKey="expenses" fill="#b23a3a" radius={[4, 4, 0, 0]} barSize={18} />
+            <Bar
+              dataKey="projectedIncome"
+              fill="rgba(31, 122, 77, 0.35)"
+              radius={[4, 4, 0, 0]}
+              barSize={12}
+            />
+            <Bar
+              dataKey="projectedExpenses"
+              fill="rgba(178, 58, 58, 0.35)"
+              radius={[4, 4, 0, 0]}
+              barSize={12}
+            />
             <Line
               type="monotone"
               dataKey="net"
