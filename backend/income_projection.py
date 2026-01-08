@@ -12,7 +12,7 @@ SUPPORTED_FREQUENCIES = {"weekly", "biweekly", "monthly"}
 
 
 @dataclass(frozen=True)
-class PaySchedule:
+class RecurringSchedule:
     amount: Decimal
     start_date: date
     account_id: int
@@ -35,7 +35,7 @@ class ProjectedIncome:
 
 
 def project_income(
-    schedule: PaySchedule,
+    schedule: RecurringSchedule,
     range_start: date,
     range_end: date,
     existing_income: Iterable[IncomeTransaction],

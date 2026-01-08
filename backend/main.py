@@ -28,7 +28,7 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.budget_engine import BudgetRule, Transaction, evaluate_budget
 from backend.csv_parser import CSVParseResult, ParsedTransaction, parse_transactions_csv
-from backend.income_projection import IncomeTransaction, PaySchedule, project_income
+from backend.income_projection import IncomeTransaction, RecurringSchedule, project_income
 
 app = FastAPI()
 
@@ -357,16 +357,18 @@ def _normalize_frequency(value: str) -> str:
     return normalized
 
 
-class PaySchedulePayload(BaseModel):
+class RecurringSchedulePayload(BaseModel):
     amount: Decimal
     start_date: date
     account_id: int
     frequency: str | None = "biweekly"
 
     @classmethod
-    def validate_payload(cls, payload: "PaySchedulePayload") -> "PaySchedulePayload":
+    def validate_payload(
+        cls, payload: "RecurringSchedulePayload"
+    ) -> "RecurringSchedulePayload":
         if payload.amount <= 0:
-            raise ValueError("Pay schedule amount must be greater than zero.")
+            raise ValueError("Recurring schedule amount must be greater than zero.")
         normalized = _normalize_frequency(payload.frequency or "biweekly")
         if normalized not in {"weekly", "biweekly", "monthly"}:
             raise ValueError("Only weekly, biweekly, or monthly schedules are supported.")
@@ -374,7 +376,7 @@ class PaySchedulePayload(BaseModel):
         return payload
 
 
-class PayScheduleResponse(BaseModel):
+class RecurringScheduleResponse(BaseModel):
     id: int
     user_id: int
     amount: Decimal
@@ -1106,10 +1108,10 @@ def delete_investment(investment_id: int, x_user_id: str | None = Header(None, a
     return {"status": "deleted"}
 
 
-@app.get("/pay-schedules", response_model=list[PayScheduleResponse])
-def list_pay_schedules(
+@app.get("/recurring-schedules", response_model=list[RecurringScheduleResponse])
+def list_recurring_schedules(
     x_user_id: str | None = Header(None, alias="x-user-id"),
-) -> list[PayScheduleResponse]:
+) -> list[RecurringScheduleResponse]:
     user_id = get_user_id(x_user_id)
     with engine.begin() as conn:
         result = conn.execute(
@@ -1119,7 +1121,7 @@ def list_pay_schedules(
         )
         rows = result.mappings().all()
     return [
-        PayScheduleResponse(
+        RecurringScheduleResponse(
             id=row["id"],
             user_id=row["user_id"],
             amount=row["amount"],
@@ -1132,13 +1134,14 @@ def list_pay_schedules(
     ]
 
 
-@app.post("/pay-schedules", response_model=PayScheduleResponse)
-def create_pay_schedule(
-    payload: PaySchedulePayload, x_user_id: str | None = Header(None, alias="x-user-id")
-) -> PayScheduleResponse:
+@app.post("/recurring-schedules", response_model=RecurringScheduleResponse)
+def create_recurring_schedule(
+    payload: RecurringSchedulePayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> RecurringScheduleResponse:
     user_id = get_user_id(x_user_id)
     try:
-        payload = PaySchedulePayload.validate_payload(payload)
+        payload = RecurringSchedulePayload.validate_payload(payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1170,8 +1173,8 @@ def create_pay_schedule(
         row = conn.execute(stmt).mappings().first()
 
     if not row:
-        raise HTTPException(status_code=500, detail="Failed to create pay schedule.")
-    return PayScheduleResponse(
+        raise HTTPException(status_code=500, detail="Failed to create recurring schedule.")
+    return RecurringScheduleResponse(
         id=row["id"],
         user_id=row["user_id"],
         amount=row["amount"],
@@ -1182,15 +1185,15 @@ def create_pay_schedule(
     )
 
 
-@app.put("/pay-schedules/{schedule_id}", response_model=PayScheduleResponse)
-def update_pay_schedule(
+@app.put("/recurring-schedules/{schedule_id}", response_model=RecurringScheduleResponse)
+def update_recurring_schedule(
     schedule_id: int,
-    payload: PaySchedulePayload,
+    payload: RecurringSchedulePayload,
     x_user_id: str | None = Header(None, alias="x-user-id"),
-) -> PayScheduleResponse:
+) -> RecurringScheduleResponse:
     user_id = get_user_id(x_user_id)
     try:
-        payload = PaySchedulePayload.validate_payload(payload)
+        payload = RecurringSchedulePayload.validate_payload(payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1222,8 +1225,8 @@ def update_pay_schedule(
         row = conn.execute(stmt).mappings().first()
 
     if not row:
-        raise HTTPException(status_code=404, detail="Pay schedule not found.")
-    return PayScheduleResponse(
+        raise HTTPException(status_code=404, detail="Recurring schedule not found.")
+    return RecurringScheduleResponse(
         id=row["id"],
         user_id=row["user_id"],
         amount=row["amount"],
@@ -1234,8 +1237,8 @@ def update_pay_schedule(
     )
 
 
-@app.delete("/pay-schedules/{schedule_id}")
-def delete_pay_schedule(
+@app.delete("/recurring-schedules/{schedule_id}")
+def delete_recurring_schedule(
     schedule_id: int, x_user_id: str | None = Header(None, alias="x-user-id")
 ) -> dict:
     user_id = get_user_id(x_user_id)
@@ -1245,7 +1248,7 @@ def delete_pay_schedule(
     with engine.begin() as conn:
         result = conn.execute(stmt)
         if result.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Pay schedule not found.")
+            raise HTTPException(status_code=404, detail="Recurring schedule not found.")
     return {"status": "deleted"}
 
 
@@ -1675,7 +1678,7 @@ def income_projections(
 
     projected_entries: list[IncomeProjectionEntry] = []
     for row in schedule_rows:
-        schedule = PaySchedule(
+        schedule = RecurringSchedule(
             amount=row["amount"],
             start_date=row["start_date"],
             account_id=row["account_id"],
