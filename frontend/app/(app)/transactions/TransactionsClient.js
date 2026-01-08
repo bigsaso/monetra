@@ -319,6 +319,9 @@ export default function TransactionsClient() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
   const [highlightedTransactionId, setHighlightedTransactionId] = useState(null);
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [monthYearFilter, setMonthYearFilter] = useState("");
 
   const currencyFormatter = useMemo(
     () =>
@@ -328,9 +331,47 @@ export default function TransactionsClient() {
       }),
     []
   );
+  const categoryOptions = useMemo(() => {
+    const names = new Set(categories.map((category) => category.name));
+    transactions.forEach((transaction) => {
+      if (transaction.category) {
+        names.add(transaction.category);
+      }
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [categories, transactions]);
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter((transaction) => {
+      if (typeFilter !== "all" && transaction.type !== typeFilter) {
+        return false;
+      }
+      if (categoryFilter !== "all") {
+        const categoryValue = transaction.category || "";
+        if (categoryFilter === "uncategorized") {
+          if (categoryValue) {
+            return false;
+          }
+        } else if (categoryValue !== categoryFilter) {
+          return false;
+        }
+      }
+      if (monthYearFilter) {
+        const match = String(transaction.date || "").match(/^(\d{4})-(\d{2})-\d{2}$/);
+        if (!match) {
+          return false;
+        }
+        const [, yearValue, monthValue] = match;
+        const [selectedYear, selectedMonth] = monthYearFilter.split("-");
+        if (yearValue !== selectedYear || monthValue !== selectedMonth) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [categoryFilter, monthYearFilter, transactions, typeFilter]);
   const totalPages = Math.max(
     1,
-    Math.ceil(transactions.length / rowsPerPage)
+    Math.ceil(filteredTransactions.length / rowsPerPage)
   );
   const selectedCategoryGroup = useMemo(() => {
     if (!form.category) {
@@ -348,8 +389,8 @@ export default function TransactionsClient() {
   }, [categories, editForm.category]);
   const pagedTransactions = useMemo(() => {
     const start = (currentPage - 1) * rowsPerPage;
-    return transactions.slice(start, start + rowsPerPage);
-  }, [currentPage, rowsPerPage, transactions]);
+    return filteredTransactions.slice(start, start + rowsPerPage);
+  }, [currentPage, filteredTransactions, rowsPerPage]);
 
   useEffect(() => {
     const transactionId = searchParams.get("transactionId");
@@ -389,6 +430,11 @@ export default function TransactionsClient() {
       return prev;
     });
   }, [totalPages]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [categoryFilter, monthYearFilter, typeFilter]);
+
 
   const loadData = async () => {
     setLoading(true);
@@ -508,6 +554,12 @@ export default function TransactionsClient() {
       investment_type: ""
     }));
   }, [selectedEditCategoryGroup]);
+
+  const resetFilters = () => {
+    setTypeFilter("all");
+    setCategoryFilter("all");
+    setMonthYearFilter("");
+  };
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -930,6 +982,8 @@ export default function TransactionsClient() {
 
   const inputClass =
     "mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10";
+  const filterSelectClass =
+    "mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10";
   const compactSelectClass =
     "ml-2 rounded-md border border-slate-200 bg-white px-2 py-1 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10";
   const buttonClass =
@@ -1179,59 +1233,117 @@ export default function TransactionsClient() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent transactions</CardTitle>
-          <CardDescription>
-            Track the latest activity across your accounts.
-          </CardDescription>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>All transactions</CardTitle>
+              <CardDescription>
+                Review every transaction across your accounts.
+              </CardDescription>
+            </div>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="text-sm text-slate-500 underline decoration-slate-300 underline-offset-4 transition hover:text-slate-700"
+            >
+              Clear all filters
+            </button>
+          </div>
         </CardHeader>
         <CardContent>
         {!loading && transactions.length > 0 ? (
-          <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-slate-600">
-            <label>
-              Rows per page
-              <select
-                className={compactSelectClass}
-                value={rowsPerPage}
-                onChange={(event) => {
-                  setRowsPerPage(Number(event.target.value));
-                  setCurrentPage(1);
-                }}
+          <>
+            <div className="mb-4 flex flex-wrap items-end gap-3 text-sm text-slate-600">
+              <label className="min-w-[140px]">
+                Type
+                <select
+                  className={filterSelectClass}
+                  value={typeFilter}
+                  onChange={(event) => setTypeFilter(event.target.value)}
+                >
+                  <option value="all">All types</option>
+                  <option value="income">Income</option>
+                  <option value="expense">Expense</option>
+                  <option value="investment">Investment</option>
+                </select>
+              </label>
+              <label className="min-w-[180px]">
+                Category
+                <select
+                  className={filterSelectClass}
+                  value={categoryFilter}
+                  onChange={(event) => setCategoryFilter(event.target.value)}
+                  disabled={categoriesLoading}
+                >
+                  <option value="all">All categories</option>
+                  <option value="uncategorized">Uncategorized</option>
+                  {categoryOptions.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="min-w-[140px]">
+                Month/year
+                <input
+                  type="month"
+                  className={filterSelectClass}
+                  value={monthYearFilter}
+                  onChange={(event) => setMonthYearFilter(event.target.value)}
+                />
+              </label>
+            </div>
+            <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-slate-600">
+              <label>
+                Rows per page
+                <select
+                  className={compactSelectClass}
+                  value={rowsPerPage}
+                  onChange={(event) => {
+                    setRowsPerPage(Number(event.target.value));
+                    setCurrentPage(1);
+                  }}
+                >
+                  {[5, 10, 25, 50].map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="text-slate-500">
+                Page {currentPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentPage <= 1}
+                className={ghostButtonClass}
               >
-                {[5, 10, 25, 50].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <span className="text-slate-500">
-              Page {currentPage} of {totalPages}
-            </span>
-            <button
-              type="button"
-              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-              disabled={currentPage <= 1}
-              className={ghostButtonClass}
-            >
-              Previous
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setCurrentPage((prev) => Math.min(totalPages, prev + 1))
-              }
-              disabled={currentPage >= totalPages}
-              className={ghostButtonClass}
-            >
-              Next
-            </button>
-          </div>
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setCurrentPage((prev) => Math.min(totalPages, prev + 1))
+                }
+                disabled={currentPage >= totalPages}
+                className={ghostButtonClass}
+              >
+                Next
+              </button>
+            </div>
+          </>
         ) : null}
         {loading ? <p>Loading transactions...</p> : null}
         {error ? <p className="text-sm text-rose-600">{error}</p> : null}
         {!loading && transactions.length === 0 ? (
           <p>No transactions yet.</p>
-        ) : (
+        ) : null}
+        {!loading && transactions.length > 0 && filteredTransactions.length === 0 ? (
+          <p>No transactions match those filters.</p>
+        ) : null}
+        {!loading && filteredTransactions.length > 0 ? (
           <Table>
             <TableHeader>
               <TableRow>
@@ -1285,7 +1397,7 @@ export default function TransactionsClient() {
               ))}
             </TableBody>
           </Table>
-        )}
+        ) : null}
         </CardContent>
       </Card>
       {showImportModal ? (
