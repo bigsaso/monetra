@@ -345,6 +345,12 @@ class MonthlyTrendResponse(BaseModel):
     projected_total_expenses: Decimal | None = None
 
 
+class NetFlowSummaryResponse(BaseModel):
+    net_flow_current_month: Decimal
+    net_flow_previous_month: Decimal
+    percentage_change: Decimal | None = None
+
+
 class CategoryBreakdownResponse(BaseModel):
     category: str
     total_spent: Decimal
@@ -687,6 +693,32 @@ def fetch_income_total(user_id: int, start_date: date, end_date: date) -> Decima
     with engine.begin() as conn:
         total_value = conn.execute(stmt).scalar_one()
     return total_value if isinstance(total_value, Decimal) else Decimal(str(total_value))
+
+
+def fetch_expense_total(user_id: int, start_date: date, end_date: date) -> Decimal:
+    total_expense_expr = func.coalesce(func.sum(transactions.c.amount), 0)
+    stmt = select(total_expense_expr).where(
+        transactions.c.user_id == user_id,
+        transactions.c.type == "expense",
+        transactions.c.date >= start_date,
+        transactions.c.date <= end_date,
+    )
+    with engine.begin() as conn:
+        total_value = conn.execute(stmt).scalar_one()
+    return total_value if isinstance(total_value, Decimal) else Decimal(str(total_value))
+
+
+def fetch_transaction_count(user_id: int, start_date: date, end_date: date) -> int:
+    total_count_expr = func.count()
+    stmt = select(total_count_expr).where(
+        transactions.c.user_id == user_id,
+        transactions.c.type.in_(("income", "expense")),
+        transactions.c.date >= start_date,
+        transactions.c.date <= end_date,
+    )
+    with engine.begin() as conn:
+        total_value = conn.execute(stmt).scalar_one()
+    return int(total_value or 0)
 
 
 @app.get("/health")
@@ -2001,6 +2033,48 @@ def monthly_trends(
             )
         )
     return results
+
+
+@app.get(
+    "/reports/net-flow",
+    response_model=NetFlowSummaryResponse,
+)
+def net_flow_summary(
+    month: str | None = Query(None),
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> NetFlowSummaryResponse:
+    user_id = get_user_id(x_user_id)
+    month_date = date.today()
+    if month:
+        try:
+            month_date = parse_month_value(month)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    start_date = month_start(month_date)
+    end_date = month_end(month_date)
+    previous_start_date = shift_month(start_date, -1)
+    previous_end_date = month_end(previous_start_date)
+
+    current_income = fetch_income_total(user_id, start_date, end_date)
+    current_expenses = fetch_expense_total(user_id, start_date, end_date)
+    current_net_flow = current_income - current_expenses
+
+    previous_income = fetch_income_total(user_id, previous_start_date, previous_end_date)
+    previous_expenses = fetch_expense_total(user_id, previous_start_date, previous_end_date)
+    previous_net_flow = previous_income - previous_expenses
+    previous_count = fetch_transaction_count(user_id, previous_start_date, previous_end_date)
+
+    percentage_change: Decimal | None = None
+    if previous_count > 0 and previous_net_flow != 0:
+        percentage_change = (
+            (current_net_flow - previous_net_flow) / abs(previous_net_flow)
+        ) * Decimal("100")
+
+    return NetFlowSummaryResponse(
+        net_flow_current_month=current_net_flow,
+        net_flow_previous_month=previous_net_flow,
+        percentage_change=percentage_change,
+    )
 
 
 @app.get("/reports/category-breakdown", response_model=list[CategoryBreakdownResponse])

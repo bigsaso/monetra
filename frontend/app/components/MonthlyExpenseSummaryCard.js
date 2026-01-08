@@ -17,6 +17,8 @@ export default function MonthlyExpenseSummaryCard({
   month,
   monthLabel,
   netFlow,
+  netFlowPercentageChange = null,
+  netFlowLoading = false,
   onPreviousMonth,
   onNextMonth,
   expenseGroups,
@@ -54,6 +56,7 @@ export default function MonthlyExpenseSummaryCard({
             monthLabel={monthLabel}
             month={month}
             description="Income minus expenses for the selected month."
+            percentageChange={netFlowLoading ? null : netFlowPercentageChange}
           />
         </div>
 

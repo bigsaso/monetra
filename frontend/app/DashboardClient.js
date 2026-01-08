@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./com
 import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
 import { useMonthlyExpenseGroups } from "../lib/useMonthlyExpenseGroups";
 import { useMonthlyTrends } from "../lib/useMonthlyTrends";
+import { useNetFlowSummary } from "../lib/useNetFlowSummary";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -58,18 +59,8 @@ const getMonthDateRange = (value) => {
   return { startDate: formatDateValue(start), endDate: formatDateValue(end) };
 };
 
-const getMonthBounds = (value) => {
-  const parsed = new Date(`${value}-01T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const start = new Date(parsed.getFullYear(), parsed.getMonth(), 1);
-  const end = new Date(parsed.getFullYear(), parsed.getMonth() + 1, 0);
-  end.setHours(23, 59, 59, 999);
-  return { start, end };
-};
-
 export default function DashboardClient() {
   const [accounts, setAccounts] = useState([]);
-  const [transactions, setTransactions] = useState([]);
   const [budgetEvaluations, setBudgetEvaluations] = useState([]);
   const [budgetLoading, setBudgetLoading] = useState(true);
   const [budgetError, setBudgetError] = useState("");
@@ -105,25 +96,20 @@ export default function DashboardClient() {
     loading: expenseSummaryBreakdownLoading,
     error: expenseSummaryBreakdownError
   } = useCategoryBreakdown({ startDate: summaryStartDate, endDate: summaryEndDate });
+  const {
+    data: netFlowSummary,
+    loading: netFlowLoading
+  } = useNetFlowSummary({ month: expenseSummaryMonth });
 
   const loadData = async () => {
     try {
-      const [accountsResponse, transactionsResponse] = await Promise.all([
-        fetch("/api/accounts"),
-        fetch("/api/transactions")
-      ]);
+      const accountsResponse = await fetch("/api/accounts");
       if (!accountsResponse.ok) {
         const data = await accountsResponse.json();
         throw new Error(data?.detail || "Failed to load accounts.");
       }
-      if (!transactionsResponse.ok) {
-        const data = await transactionsResponse.json();
-        throw new Error(data?.detail || "Failed to load transactions.");
-      }
       const accountsData = await accountsResponse.json();
-      const transactionsData = await transactionsResponse.json();
       setAccounts(accountsData);
-      setTransactions(transactionsData);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(err);
@@ -154,23 +140,9 @@ export default function DashboardClient() {
   }, []);
 
   const expenseSummaryNetFlow = useMemo(() => {
-    const bounds = getMonthBounds(expenseSummaryMonth);
-    if (!bounds) return 0;
-    return transactions.reduce((total, transaction) => {
-      const txDate = new Date(`${transaction.date}T00:00:00`);
-      if (txDate < bounds.start || txDate > bounds.end) {
-        return total;
-      }
-      const amount = Number(transaction.amount || 0);
-      if (transaction.type === "expense") {
-        return total - amount;
-      }
-      if (transaction.type === "income") {
-        return total + amount;
-      }
-      return total;
-    }, 0);
-  }, [expenseSummaryMonth, transactions]);
+    if (!netFlowSummary) return 0;
+    return Number(netFlowSummary.net_flow_current_month || 0);
+  }, [netFlowSummary]);
 
   const budgetRuleName = (rule) => {
     const ruleTypeLabels = {
@@ -244,6 +216,8 @@ export default function DashboardClient() {
           month={expenseSummaryMonth}
           monthLabel={formatMonthLabel(expenseSummaryMonth)}
           netFlow={expenseSummaryNetFlow}
+          netFlowPercentageChange={netFlowSummary?.percentage_change ?? null}
+          netFlowLoading={netFlowLoading}
           onPreviousMonth={handleExpenseSummaryPreviousMonth}
           onNextMonth={handleExpenseSummaryNextMonth}
           expenseGroups={expenseSummaryGroups}
