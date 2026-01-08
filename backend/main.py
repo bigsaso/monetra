@@ -126,6 +126,7 @@ pay_schedules = Table(
     Column("frequency", String(50), nullable=False),
     Column("start_date", Date, nullable=False),
     Column("account_id", Integer, ForeignKey("accounts.id"), nullable=False),
+    Column("category_id", Integer, ForeignKey("categories.id")),
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
 )
 
@@ -388,6 +389,7 @@ class RecurringSchedulePayload(BaseModel):
     account_id: int
     frequency: str | None = "biweekly"
     kind: str = "income"
+    category_id: int | None = None
 
     @classmethod
     def validate_payload(
@@ -411,6 +413,7 @@ class RecurringScheduleResponse(BaseModel):
     account_id: int
     frequency: str
     kind: str
+    category_id: int | None = None
     created_at: datetime | None = None
 
 
@@ -1157,6 +1160,7 @@ def list_recurring_schedules(
             account_id=row["account_id"],
             frequency=row["frequency"],
             kind=row["kind"],
+            category_id=row["category_id"],
             created_at=row["created_at"],
         )
         for row in rows
@@ -1180,6 +1184,15 @@ def create_recurring_schedule(
         ).first()
         if not account_exists:
             raise HTTPException(status_code=404, detail="Account not found.")
+        if payload.category_id is not None:
+            category_exists = conn.execute(
+                select(categories.c.id).where(
+                    categories.c.id == payload.category_id,
+                    categories.c.user_id == user_id,
+                )
+            ).first()
+            if not category_exists:
+                raise HTTPException(status_code=404, detail="Category not found.")
         stmt = (
             insert(pay_schedules)
             .values(
@@ -1189,6 +1202,7 @@ def create_recurring_schedule(
                 start_date=payload.start_date,
                 account_id=payload.account_id,
                 frequency=payload.frequency,
+                category_id=payload.category_id,
             )
             .returning(
                 pay_schedules.c.id,
@@ -1198,6 +1212,7 @@ def create_recurring_schedule(
                 pay_schedules.c.start_date,
                 pay_schedules.c.account_id,
                 pay_schedules.c.frequency,
+                pay_schedules.c.category_id,
                 pay_schedules.c.created_at,
             )
         )
@@ -1213,6 +1228,7 @@ def create_recurring_schedule(
         account_id=row["account_id"],
         frequency=row["frequency"],
         kind=row["kind"],
+        category_id=row["category_id"],
         created_at=row["created_at"],
     )
 
@@ -1235,6 +1251,15 @@ def update_recurring_schedule(
         ).first()
         if not account_exists:
             raise HTTPException(status_code=404, detail="Account not found.")
+        if payload.category_id is not None:
+            category_exists = conn.execute(
+                select(categories.c.id).where(
+                    categories.c.id == payload.category_id,
+                    categories.c.user_id == user_id,
+                )
+            ).first()
+            if not category_exists:
+                raise HTTPException(status_code=404, detail="Category not found.")
         stmt = (
             update(pay_schedules)
             .where(pay_schedules.c.id == schedule_id, pay_schedules.c.user_id == user_id)
@@ -1244,6 +1269,7 @@ def update_recurring_schedule(
                 account_id=payload.account_id,
                 frequency=payload.frequency,
                 kind=payload.kind,
+                category_id=payload.category_id,
             )
             .returning(
                 pay_schedules.c.id,
@@ -1253,6 +1279,7 @@ def update_recurring_schedule(
                 pay_schedules.c.start_date,
                 pay_schedules.c.account_id,
                 pay_schedules.c.frequency,
+                pay_schedules.c.category_id,
                 pay_schedules.c.created_at,
             )
         )
@@ -1268,6 +1295,7 @@ def update_recurring_schedule(
         account_id=row["account_id"],
         frequency=row["frequency"],
         kind=row["kind"],
+        category_id=row["category_id"],
         created_at=row["created_at"],
     )
 

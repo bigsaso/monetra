@@ -27,7 +27,8 @@ const emptyForm = {
   start_date: "",
   account_id: "",
   frequency: "biweekly",
-  kind: "income"
+  kind: "income",
+  category_id: ""
 };
 
 const isValidIsoDate = (value) =>
@@ -87,12 +88,14 @@ const scheduleKindLookup = scheduleKindOptions.reduce((acc, option) => {
 export default function RecurringSchedulesClient() {
   const [schedules, setSchedules] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editForm, setEditForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [accountsLoading, setAccountsLoading] = useState(true);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -141,8 +144,27 @@ export default function RecurringSchedulesClient() {
     }
   };
 
+  const loadCategories = async () => {
+    setCategoriesLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/categories");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load categories.");
+      }
+      const data = await response.json();
+      setCategories(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadAccounts();
+    loadCategories();
     loadSchedules();
   }, []);
 
@@ -158,6 +180,13 @@ export default function RecurringSchedulesClient() {
       return acc;
     }, {});
   }, [accounts]);
+
+  const categoryLookup = useMemo(() => {
+    return categories.reduce((acc, category) => {
+      acc[category.id] = category.name;
+      return acc;
+    }, {});
+  }, [categories]);
 
   const schedulesByKind = useMemo(() => {
     const grouped = scheduleKindOptions.reduce((acc, option) => {
@@ -205,12 +234,14 @@ export default function RecurringSchedulesClient() {
     setSaving(true);
     setError("");
     try {
+      const categoryId = form.category_id ? Number(form.category_id) : null;
       const payload = {
         amount: Number(form.amount),
         start_date: form.start_date,
         account_id: Number(form.account_id),
         frequency: form.frequency,
-        kind: form.kind
+        kind: form.kind,
+        category_id: categoryId
       };
       const response = await fetch("/api/recurring-schedules", {
         method: "POST",
@@ -238,7 +269,8 @@ export default function RecurringSchedulesClient() {
       start_date: schedule.start_date,
       account_id: String(schedule.account_id),
       frequency: schedule.frequency || "biweekly",
-      kind: scheduleKindLookup[schedule.kind] ? schedule.kind : "income"
+      kind: scheduleKindLookup[schedule.kind] ? schedule.kind : "income",
+      category_id: schedule.category_id ? String(schedule.category_id) : ""
     });
     setIsEditOpen(true);
   };
@@ -274,12 +306,14 @@ export default function RecurringSchedulesClient() {
     setSaving(true);
     setError("");
     try {
+      const categoryId = editForm.category_id ? Number(editForm.category_id) : null;
       const payload = {
         amount: Number(editForm.amount),
         start_date: editForm.start_date,
         account_id: Number(editForm.account_id),
         frequency: editForm.frequency,
-        kind: editForm.kind
+        kind: editForm.kind,
+        category_id: categoryId
       };
       const response = await fetch(`/api/recurring-schedules/${editingId}`, {
         method: "PUT",
@@ -411,6 +445,28 @@ export default function RecurringSchedulesClient() {
                 </select>
               </label>
               <label className="text-sm text-slate-600">
+                Category (optional)
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="category_id"
+                  value={form.category_id}
+                  onChange={handleChange}
+                  disabled={categoriesLoading}
+                >
+                  <option value="">No category</option>
+                  {categories.length === 0 ? (
+                    <option value="" disabled>
+                      No categories available
+                    </option>
+                  ) : null}
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm text-slate-600">
                 {selectedKind.cadenceLabel}
                 <select
                   className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
@@ -469,6 +525,7 @@ export default function RecurringSchedulesClient() {
                               <TableHead>Amount</TableHead>
                               <TableHead>Start date</TableHead>
                               <TableHead>Account</TableHead>
+                              <TableHead>Category</TableHead>
                               <TableHead>Frequency</TableHead>
                               <TableHead>Actions</TableHead>
                             </TableRow>
@@ -481,6 +538,11 @@ export default function RecurringSchedulesClient() {
                                 </TableCell>
                                 <TableCell>{formatDate(schedule.start_date)}</TableCell>
                                 <TableCell>{accountLookup[schedule.account_id] || "-"}</TableCell>
+                                <TableCell>
+                                  {schedule.category_id
+                                    ? categoryLookup[schedule.category_id] || "-"
+                                    : "-"}
+                                </TableCell>
                                 <TableCell className="capitalize">
                                   {schedule.frequency}
                                 </TableCell>
@@ -585,6 +647,28 @@ export default function RecurringSchedulesClient() {
                 {accounts.map((account) => (
                   <option key={account.id} value={account.id}>
                     {account.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm text-slate-600">
+              Category (optional)
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="category_id"
+                value={editForm.category_id}
+                onChange={handleEditChange}
+                disabled={categoriesLoading}
+              >
+                <option value="">No category</option>
+                {categories.length === 0 ? (
+                  <option value="" disabled>
+                    No categories available
+                  </option>
+                ) : null}
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
                   </option>
                 ))}
               </select>
