@@ -7,11 +7,17 @@ import { useEffect, useState } from "react";
  * @property {string} month
  * @property {number|string} total_income
  * @property {number|string} total_expenses
+ * @property {number|string} total_regular_expenses
+ * @property {number|string} total_investment_expenses
  * @property {number|string} net_cashflow
  * @property {number|string=} projected_total_income
  * @property {number|string=} projected_total_expenses
+ * @property {number|string=} projected_total_regular_expenses
+ * @property {number|string=} projected_total_investment_expenses
  * @property {number|string=} projected_total_income_current_month
  * @property {number|string=} projected_total_expenses_current_month
+ * @property {number|string=} projected_total_regular_expenses_current_month
+ * @property {number|string=} projected_total_investment_expenses_current_month
  */
 
 /**

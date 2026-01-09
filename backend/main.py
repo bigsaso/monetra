@@ -17,10 +17,12 @@ from sqlalchemy import (
     String,
     Table,
     UniqueConstraint,
+    and_,
     case,
     create_engine,
     func,
     insert,
+    or_,
     select,
     update,
 )
@@ -340,11 +342,17 @@ class MonthlyTrendResponse(BaseModel):
     month: str
     total_income: Decimal
     total_expenses: Decimal
+    total_regular_expenses: Decimal
+    total_investment_expenses: Decimal
     net_cashflow: Decimal
     projected_total_income: Decimal | None = None
     projected_total_expenses: Decimal | None = None
+    projected_total_regular_expenses: Decimal | None = None
+    projected_total_investment_expenses: Decimal | None = None
     projected_total_income_current_month: Decimal | None = None
     projected_total_expenses_current_month: Decimal | None = None
+    projected_total_regular_expenses_current_month: Decimal | None = None
+    projected_total_investment_expenses_current_month: Decimal | None = None
 
 
 class NetFlowSummaryResponse(BaseModel):
@@ -1901,13 +1909,49 @@ def monthly_trends(
         func.sum(case((transactions.c.type == "income", transactions.c.amount), else_=0)),
         0,
     ).label("total_income")
-    expense_sum = func.coalesce(
-        func.sum(case((transactions.c.type == "expense", transactions.c.amount), else_=0)),
+    regular_expense_sum = func.coalesce(
+        func.sum(
+            case(
+                (
+                    and_(
+                        transactions.c.type == "expense",
+                        or_(
+                            categories.c.group.is_(None),
+                            categories.c.group != "investments",
+                        ),
+                    ),
+                    transactions.c.amount,
+                ),
+                else_=0,
+            )
+        ),
         0,
-    ).label("total_expenses")
+    ).label("total_regular_expenses")
+    investment_expense_sum = func.coalesce(
+        func.sum(
+            case(
+                (
+                    and_(
+                        transactions.c.type == "expense",
+                        categories.c.group == "investments",
+                    ),
+                    transactions.c.amount,
+                ),
+                else_=0,
+            )
+        ),
+        0,
+    ).label("total_investment_expenses")
 
     stmt = (
-        select(month_expr, income_sum, expense_sum)
+        select(month_expr, income_sum, regular_expense_sum, investment_expense_sum)
+        .select_from(
+            transactions.outerjoin(
+                categories,
+                (transactions.c.user_id == categories.c.user_id)
+                & (transactions.c.category == categories.c.name),
+            )
+        )
         .where(
             transactions.c.user_id == user_id,
             transactions.c.date >= start_date,
@@ -1923,7 +1967,8 @@ def monthly_trends(
     totals_by_month = {
         row["month"]: {
             "income": row["total_income"],
-            "expenses": row["total_expenses"],
+            "regular_expenses": row["total_regular_expenses"],
+            "investment_expenses": row["total_investment_expenses"],
         }
         for row in rows
     }
@@ -1949,18 +1994,28 @@ def monthly_trends(
                     pay_schedules.c.account_id,
                     pay_schedules.c.frequency,
                     pay_schedules.c.kind,
+                    categories.c.group.label("category_group"),
                 ).where(
                     pay_schedules.c.user_id == user_id,
                     pay_schedules.c.kind.in_(("income", "expense")),
+                )
+                .select_from(
+                    pay_schedules.outerjoin(
+                        categories, pay_schedules.c.category_id == categories.c.id
+                    )
                 )
             ).mappings().all()
         existing_transactions: list[ActualTransaction] = []
 
         projected_income = Decimal("0")
-        projected_expenses = Decimal("0")
+        projected_regular_expenses = Decimal("0")
+        projected_investment_expenses = Decimal("0")
         for row in schedule_rows:
             schedule_amount = normalize_amount(row["amount"])
             schedule_kind = row["kind"].strip().lower()
+            schedule_category_group = (
+                row["category_group"].strip().lower() if row["category_group"] else None
+            )
             schedule = RecurringSchedule(
                 amount=schedule_amount,
                 start_date=row["start_date"],
@@ -1981,12 +2036,20 @@ def monthly_trends(
                 if projection.transaction_type == "income":
                     projected_income += projection.amount
                 elif projection.transaction_type == "expense":
-                    projected_expenses += projection.amount
+                    if schedule_category_group == "investments":
+                        projected_investment_expenses += projection.amount
+                    else:
+                        projected_regular_expenses += projection.amount
 
-        if projected_income > 0 or projected_expenses > 0:
+        if (
+            projected_income > 0
+            or projected_regular_expenses > 0
+            or projected_investment_expenses > 0
+        ):
             return {
                 "income": projected_income,
-                "expenses": projected_expenses,
+                "regular_expenses": projected_regular_expenses,
+                "investment_expenses": projected_investment_expenses,
             }
         return {}
 
@@ -2009,28 +2072,67 @@ def monthly_trends(
     results: list[MonthlyTrendResponse] = []
     for month_value in iter_months(start_date, end_date):
         key = month_value.strftime("%Y-%m")
-        totals = totals_by_month.get(key, {"income": Decimal("0"), "expenses": Decimal("0")})
+        totals = totals_by_month.get(
+            key,
+            {
+                "income": Decimal("0"),
+                "regular_expenses": Decimal("0"),
+                "investment_expenses": Decimal("0"),
+            },
+        )
         income = totals["income"]
-        expenses = totals["expenses"]
+        regular_expenses = totals["regular_expenses"]
+        investment_expenses = totals["investment_expenses"]
+        expenses = regular_expenses + investment_expenses
         projected_totals = projected_totals_by_month.get(key, {})
         projected_income = projected_totals.get("income")
-        projected_expenses = projected_totals.get("expenses")
+        projected_regular_expenses = projected_totals.get("regular_expenses")
+        projected_investment_expenses = projected_totals.get("investment_expenses")
         projected_current_totals = projected_current_month_by_month.get(key, {})
         projected_current_income = projected_current_totals.get("income")
-        projected_current_expenses = projected_current_totals.get("expenses")
+        projected_current_regular_expenses = projected_current_totals.get("regular_expenses")
+        projected_current_investment_expenses = projected_current_totals.get(
+            "investment_expenses"
+        )
+        projected_expenses = (
+            (projected_regular_expenses or Decimal("0"))
+            + (projected_investment_expenses or Decimal("0"))
+        )
+        projected_current_expenses = (
+            (projected_current_regular_expenses or Decimal("0"))
+            + (projected_current_investment_expenses or Decimal("0"))
+        )
         results.append(
             MonthlyTrendResponse(
                 month=key,
                 total_income=income,
                 total_expenses=expenses,
+                total_regular_expenses=regular_expenses,
+                total_investment_expenses=investment_expenses,
                 net_cashflow=income - expenses,
                 projected_total_income=projected_income if projected_income else None,
                 projected_total_expenses=projected_expenses if projected_expenses else None,
+                projected_total_regular_expenses=(
+                    projected_regular_expenses if projected_regular_expenses else None
+                ),
+                projected_total_investment_expenses=(
+                    projected_investment_expenses if projected_investment_expenses else None
+                ),
                 projected_total_income_current_month=(
                     projected_current_income if projected_current_income else None
                 ),
                 projected_total_expenses_current_month=(
                     projected_current_expenses if projected_current_expenses else None
+                ),
+                projected_total_regular_expenses_current_month=(
+                    projected_current_regular_expenses
+                    if projected_current_regular_expenses
+                    else None
+                ),
+                projected_total_investment_expenses_current_month=(
+                    projected_current_investment_expenses
+                    if projected_current_investment_expenses
+                    else None
                 ),
             )
         )

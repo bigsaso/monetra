@@ -29,9 +29,13 @@ const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   const data = payload[0]?.payload || {};
   const hasProjected =
-    Number(data.projectedIncome || 0) > 0 || Number(data.projectedExpenses || 0) > 0;
+    Number(data.projectedIncome || 0) > 0 ||
+    Number(data.projectedRegularExpenses || 0) > 0 ||
+    Number(data.projectedInvestmentExpenses || 0) > 0;
   const projectedNet =
-    Number(data.projectedIncome || 0) - Number(data.projectedExpenses || 0);
+    Number(data.projectedIncome || 0) -
+    Number(data.projectedRegularExpenses || 0) -
+    Number(data.projectedInvestmentExpenses || 0);
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white/95 p-2 text-xs text-slate-700 shadow-lg">
@@ -39,13 +43,22 @@ const CustomTooltip = ({ active, payload, label }) => {
         {formatMonthLabel(label)}
       </p>
       <p>Actual income: {formatAmount(data.income || 0)}</p>
-      <p>Actual expenses: {formatAmount(data.expenses || 0)}</p>
+      <p>Actual expenses: {formatAmount(data.regularExpenses || 0)}</p>
+      <p>Actual investments: {formatAmount(data.investmentExpenses || 0)}</p>
       <p>Actual net: {formatAmount(data.net || 0)}</p>
       {hasProjected ? (
         <p>Projected income: {formatAmount(data.projectedIncome || 0)}</p>
       ) : null}
       {hasProjected ? (
-        <p>Projected expenses: {formatAmount(data.projectedExpenses || 0)}</p>
+        <p>
+          Projected expenses: {formatAmount(data.projectedRegularExpenses || 0)}
+        </p>
+      ) : null}
+      {hasProjected ? (
+        <p>
+          Projected investments:{" "}
+          {formatAmount(data.projectedInvestmentExpenses || 0)}
+        </p>
       ) : null}
       {hasProjected ? <p>Projected net: {formatAmount(projectedNet)}</p> : null}
     </div>
@@ -63,42 +76,64 @@ export default function MonthlyCashflowChart({ data }) {
 
       return (data || []).map((item) => {
         const income = Number(item.total_income || 0);
-        const expenses = Number(item.total_expenses || 0);
+        const regularExpenses = Number(item.total_regular_expenses || 0);
+        const investmentExpenses = Number(item.total_investment_expenses || 0);
         const net = Number(item.net_cashflow || 0);
         const projectedIncomeCurrentRaw =
           item.month === currentMonthKey
             ? Number(item.projected_total_income_current_month || 0)
             : 0;
-        const projectedExpensesCurrentRaw =
+        const projectedRegularExpensesCurrentRaw =
           item.month === currentMonthKey
-            ? Number(item.projected_total_expenses_current_month || 0)
+            ? Number(item.projected_total_regular_expenses_current_month || 0)
+            : 0;
+        const projectedInvestmentExpensesCurrentRaw =
+          item.month === currentMonthKey
+            ? Number(item.projected_total_investment_expenses_current_month || 0)
             : 0;
         const projectedIncomeNext =
           item.month === nextMonthKey
             ? Number(item.projected_total_income || 0)
             : 0;
-        const projectedExpensesNext =
+        const projectedRegularExpensesNext =
           item.month === nextMonthKey
-            ? Number(item.projected_total_expenses || 0)
+            ? Number(item.projected_total_regular_expenses || 0)
+            : 0;
+        const projectedInvestmentExpensesNext =
+          item.month === nextMonthKey
+            ? Number(item.projected_total_investment_expenses || 0)
             : 0;
         const projectedIncomeTotal =
           item.month === currentMonthKey
             ? projectedIncomeCurrentRaw
             : projectedIncomeNext;
-        const projectedExpensesTotal =
+        const projectedRegularExpensesTotal =
           item.month === currentMonthKey
-            ? projectedExpensesCurrentRaw
-            : projectedExpensesNext;
+            ? projectedRegularExpensesCurrentRaw
+            : projectedRegularExpensesNext;
+        const projectedInvestmentExpensesTotal =
+          item.month === currentMonthKey
+            ? projectedInvestmentExpensesCurrentRaw
+            : projectedInvestmentExpensesNext;
 
         return {
           month: item.month,
           income,
-          expenses,
+          regularExpenses,
+          investmentExpenses,
           net,
           incomeProjectedRemainder: Math.max(projectedIncomeTotal - income, 0),
-          expensesProjectedRemainder: Math.max(projectedExpensesTotal - expenses, 0),
+          regularExpensesProjectedRemainder: Math.max(
+            projectedRegularExpensesTotal - regularExpenses,
+            0
+          ),
+          investmentExpensesProjectedRemainder: Math.max(
+            projectedInvestmentExpensesTotal - investmentExpenses,
+            0
+          ),
           projectedIncome: projectedIncomeTotal,
-          projectedExpenses: projectedExpensesTotal
+          projectedRegularExpenses: projectedRegularExpensesTotal,
+          projectedInvestmentExpenses: projectedInvestmentExpensesTotal
         };
       });
     },
@@ -144,6 +179,7 @@ export default function MonthlyCashflowChart({ data }) {
               radius={[4, 4, 0, 0]}
               barSize={18}
               stackId="income"
+              isAnimationActive={false}
             />
             <Bar
               dataKey="incomeProjectedRemainder"
@@ -151,20 +187,39 @@ export default function MonthlyCashflowChart({ data }) {
               radius={[4, 4, 0, 0]}
               barSize={18}
               stackId="income"
+              isAnimationActive={false}
             />
             <Bar
-              dataKey="expenses"
+              dataKey="regularExpenses"
               fill="#b23a3a"
               radius={[4, 4, 0, 0]}
               barSize={18}
               stackId="expenses"
+              isAnimationActive={false}
             />
             <Bar
-              dataKey="expensesProjectedRemainder"
+              dataKey="regularExpensesProjectedRemainder"
               fill="rgba(178, 58, 58, 0.35)"
               radius={[4, 4, 0, 0]}
               barSize={18}
               stackId="expenses"
+              isAnimationActive={false}
+            />
+            <Bar
+              dataKey="investmentExpenses"
+              fill="#1d4ed8"
+              radius={[4, 4, 0, 0]}
+              barSize={18}
+              stackId="investments"
+              isAnimationActive={false}
+            />
+            <Bar
+              dataKey="investmentExpensesProjectedRemainder"
+              fill="rgba(29, 78, 216, 0.35)"
+              radius={[4, 4, 0, 0]}
+              barSize={18}
+              stackId="investments"
+              isAnimationActive={false}
             />
             <Line
               type="monotone"
@@ -172,6 +227,7 @@ export default function MonthlyCashflowChart({ data }) {
               stroke="#2e2f33"
               strokeWidth={2}
               dot={{ r: 3, fill: "#2e2f33" }}
+              isAnimationActive={false}
             />
           </ComposedChart>
         </ResponsiveContainer>
@@ -185,6 +241,10 @@ export default function MonthlyCashflowChart({ data }) {
         <span className="inline-flex items-center gap-2">
           <span className="h-2.5 w-2.5 rounded-full bg-rose-600" />
           Expenses
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+          Investments
         </span>
         <span className="inline-flex items-center gap-2">
           <span className="h-2.5 w-2.5 rounded-full bg-slate-900" />
