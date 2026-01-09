@@ -229,6 +229,22 @@ export default function DashboardClient() {
           categoryBreakdownError={expenseSummaryBreakdownError}
         />
 
+        <SpendingByCategoryLineChartCard className="lg:col-span-6" />
+
+        <Card className="lg:col-span-6">
+          <CardHeader>
+            <CardTitle>Monthly cashflow</CardTitle>
+            <CardDescription>Income, expenses, and net cashflow.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {trendsLoading ? <p>Loading monthly cashflow...</p> : null}
+            {trendsError ? <p className="text-rose-600">{trendsError}</p> : null}
+            {!trendsLoading && !trendsError ? (
+              <MonthlyCashflowChart data={monthlyTrends} />
+            ) : null}
+          </CardContent>
+        </Card>
+
         <Card className="lg:col-span-6">
           <CardHeader>
             <CardTitle>Budget overview</CardTitle>
@@ -292,23 +308,7 @@ export default function DashboardClient() {
             )}
           </CardContent>
         </Card>
-
-        <Card className="lg:col-span-6">
-          <CardHeader>
-            <CardTitle>Monthly cashflow</CardTitle>
-            <CardDescription>Income, expenses, and net cashflow.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {trendsLoading ? <p>Loading monthly cashflow...</p> : null}
-            {trendsError ? <p className="text-rose-600">{trendsError}</p> : null}
-            {!trendsLoading && !trendsError ? (
-              <MonthlyCashflowChart data={monthlyTrends} />
-            ) : null}
-          </CardContent>
-        </Card>
-
-        <ExpenseLineChart />
-        <SpendingByCategoryLineChartCard />
+        <ExpenseLineChart className="lg:col-span-6" />
       </main>
     </div>
   );

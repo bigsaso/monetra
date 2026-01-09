@@ -180,7 +180,8 @@ const writeStoredAccountId = (value) => {
 
 export default function ExpenseLineChart({
   account_id = "",
-  account_name = ""
+  account_name = "",
+  className = "lg:col-span-12"
 }) {
   const [accounts, setAccounts] = useState([]);
   const [accountTransactions, setAccountTransactions] = useState([]);
@@ -386,7 +387,7 @@ export default function ExpenseLineChart({
     "mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10";
 
   return (
-    <Card className="lg:col-span-12">
+    <Card className={className}>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         <CardDescription>{subtitle}</CardDescription>
