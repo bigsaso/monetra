@@ -320,6 +320,7 @@ export default function TransactionsClient() {
   const [currentPage, setCurrentPage] = useState(1);
   const [highlightedTransactionId, setHighlightedTransactionId] = useState(null);
   const [typeFilter, setTypeFilter] = useState("all");
+  const [accountFilter, setAccountFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [monthYearFilter, setMonthYearFilter] = useState("");
 
@@ -342,6 +343,11 @@ export default function TransactionsClient() {
   }, [categories, transactions]);
   const filteredTransactions = useMemo(() => {
     return transactions.filter((transaction) => {
+      if (accountFilter !== "all") {
+        if (String(transaction.account_id) !== accountFilter) {
+          return false;
+        }
+      }
       if (typeFilter !== "all" && transaction.type !== typeFilter) {
         return false;
       }
@@ -368,7 +374,7 @@ export default function TransactionsClient() {
       }
       return true;
     });
-  }, [categoryFilter, monthYearFilter, transactions, typeFilter]);
+  }, [accountFilter, categoryFilter, monthYearFilter, transactions, typeFilter]);
   const totalPages = Math.max(
     1,
     Math.ceil(filteredTransactions.length / rowsPerPage)
@@ -433,7 +439,7 @@ export default function TransactionsClient() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [categoryFilter, monthYearFilter, typeFilter]);
+  }, [accountFilter, categoryFilter, monthYearFilter, typeFilter]);
 
 
   const loadData = async () => {
@@ -556,6 +562,7 @@ export default function TransactionsClient() {
   }, [selectedEditCategoryGroup]);
 
   const resetFilters = () => {
+    setAccountFilter("all");
     setTypeFilter("all");
     setCategoryFilter("all");
     setMonthYearFilter("");
@@ -1253,6 +1260,26 @@ export default function TransactionsClient() {
         {!loading && transactions.length > 0 ? (
           <>
             <div className="mb-4 flex flex-wrap items-end gap-3 text-sm text-slate-600">
+              <label className="min-w-[180px]">
+                Account
+                <select
+                  className={filterSelectClass}
+                  value={accountFilter}
+                  onChange={(event) => setAccountFilter(event.target.value)}
+                  disabled={accounts.length === 0}
+                >
+                  <option value="all">All accounts</option>
+                  {accounts.length === 0 ? (
+                    <option value="none">No accounts available</option>
+                  ) : (
+                    accounts.map((account) => (
+                      <option key={account.id} value={String(account.id)}>
+                        {account.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
               <label className="min-w-[140px]">
                 Type
                 <select
