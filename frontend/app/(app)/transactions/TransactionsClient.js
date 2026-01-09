@@ -1238,7 +1238,7 @@ export default function TransactionsClient() {
         </Card>
       </div>
 
-      <Card>
+      <Card className="mt-8">
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
