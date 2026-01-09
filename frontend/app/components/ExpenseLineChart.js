@@ -5,6 +5,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -79,13 +80,6 @@ const getTimeframeStart = (endDate, timeframe) => {
   return start;
 };
 
-const getDayCount = (startDate, endDate) => {
-  const start = startOfDay(startDate);
-  const end = startOfDay(endDate);
-  const diffMs = end.getTime() - start.getTime();
-  return Math.max(1, Math.round(diffMs / 86400000) + 1);
-};
-
 const getBucketStart = (date, resolution) => {
   const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   if (resolution === "weekly") {
@@ -148,6 +142,14 @@ const addInterval = (date, resolution) => {
   next.setDate(next.getDate() + 1);
   return next;
 };
+
+const getAverageLabel = (resolution) =>
+  ({
+    daily: "Avg/day",
+    weekly: "Avg/week",
+    monthly: "Avg/month",
+    yearly: "Avg/year"
+  }[resolution] || "Avg/period");
 
 const normalizeId = (value) => {
   if (value === null || value === undefined) return "";
@@ -268,6 +270,7 @@ export default function ExpenseLineChart({
   const accountIds = useMemo(() => {
     return new Set(selectedAccountId ? [selectedAccountId] : []);
   }, [selectedAccountId]);
+  const averageLabel = getAverageLabel(resolution);
 
   const { series } = useMemo(() => {
     if (!accountIds.size) {
@@ -318,19 +321,24 @@ export default function ExpenseLineChart({
       amountTotal += Number(transaction.amount || 0);
     });
 
-    const dayCount = getDayCount(rangeStart, maxDate);
-    const averageDaily = dayCount ? amountTotal / dayCount : 0;
-
-    const seriesData = [];
+    let bucketCount = 0;
     let cursor = getBucketStart(rangeStart, resolution);
     const end = getBucketStart(maxDate, resolution);
+    while (cursor.getTime() <= end.getTime()) {
+      bucketCount += 1;
+      cursor = addInterval(cursor, resolution);
+    }
+    const averagePerBucket = bucketCount ? amountTotal / bucketCount : 0;
+
+    const seriesData = [];
+    cursor = getBucketStart(rangeStart, resolution);
     while (cursor.getTime() <= end.getTime()) {
       const key = formatBucketKey(cursor, resolution);
       const entry = totals.get(key);
       seriesData.push({
         label: formatBucketLabel(cursor, resolution),
         total: entry ? entry.total : 0,
-        average: averageDaily
+        average: averagePerBucket
       });
       cursor = addInterval(cursor, resolution);
     }
@@ -496,7 +504,7 @@ export default function ExpenseLineChart({
                             </p>
                             <p>{currencyFormatter.format(totalValue)}</p>
                             <p className="text-slate-500">
-                              Avg/day: {currencyFormatter.format(averageValue)}
+                              {averageLabel}: {currencyFormatter.format(averageValue)}
                             </p>
                           </div>
                         );
@@ -504,9 +512,11 @@ export default function ExpenseLineChart({
                       cursor={{ stroke: "rgba(46, 47, 51, 0.2)" }}
                       wrapperStyle={{ outline: "none" }}
                     />
+                    <Legend verticalAlign="top" align="right" height={24} />
                     <Line
                       type="monotone"
                       dataKey="total"
+                      name="Total"
                       stroke="#2e2f33"
                       strokeWidth={2}
                       dot={false}
@@ -515,6 +525,7 @@ export default function ExpenseLineChart({
                     <Line
                       type="monotone"
                       dataKey="average"
+                      name={averageLabel}
                       stroke="#8a8f98"
                       strokeDasharray="4 4"
                       strokeWidth={2}
