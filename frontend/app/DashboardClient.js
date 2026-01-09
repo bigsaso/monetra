@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import ExpenseLineChart from "./components/ExpenseLineChart";
 import MonthlyExpenseSummaryCard from "./components/MonthlyExpenseSummaryCard";
 import MonthlyCashflowChart from "./components/MonthlyCashflowChart";
+import SpendingByCategoryLineChartCard from "./components/SpendingByCategoryLineChartCard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
 import { useMonthlyExpenseGroups } from "../lib/useMonthlyExpenseGroups";
@@ -307,6 +308,7 @@ export default function DashboardClient() {
         </Card>
 
         <ExpenseLineChart />
+        <SpendingByCategoryLineChartCard />
       </main>
     </div>
   );

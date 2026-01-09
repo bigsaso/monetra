@@ -154,6 +154,30 @@ const normalizeId = (value) => {
   return String(value);
 };
 
+const STORAGE_KEY = "expenseLineChart.defaultAccountId";
+
+const readStoredAccountId = () => {
+  if (typeof window === "undefined") return "";
+  try {
+    return normalizeId(window.localStorage.getItem(STORAGE_KEY) || "");
+  } catch {
+    return "";
+  }
+};
+
+const writeStoredAccountId = (value) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (value) {
+      window.localStorage.setItem(STORAGE_KEY, value);
+    } else {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage errors.
+  }
+};
+
 export default function ExpenseLineChart({
   account_id = "",
   account_name = ""
@@ -208,6 +232,10 @@ export default function ExpenseLineChart({
       if (current && normalizedAccounts.includes(current)) {
         return current;
       }
+      const storedId = readStoredAccountId();
+      if (storedId && normalizedAccounts.includes(storedId)) {
+        return storedId;
+      }
       const normalizedPropId = normalizeId(account_id);
       if (normalizedPropId && normalizedAccounts.includes(normalizedPropId)) {
         return normalizedPropId;
@@ -215,6 +243,10 @@ export default function ExpenseLineChart({
       return normalizeId(accounts[0].id);
     });
   }, [account_id, accounts]);
+
+  useEffect(() => {
+    writeStoredAccountId(selectedAccountId);
+  }, [selectedAccountId]);
 
   const selectedAccount = useMemo(
     () =>
