@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import {
   Card,
@@ -72,6 +72,8 @@ export default function ExpenseGroupPieChart({
   className = "",
   showMonthControls = true
 }) {
+  const legendContainerRef = useRef(null);
+  const [legendTooltip, setLegendTooltip] = useState(null);
   const resolvedMonth = useMemo(
     () => month || formatMonthValue(new Date()),
     [month]
@@ -150,6 +152,22 @@ export default function ExpenseGroupPieChart({
     onMonthChange(shiftMonth(resolvedMonth, 1));
   };
 
+  const handleLegendEnter = (item, event) => {
+    if (!legendContainerRef.current) return;
+    const containerRect = legendContainerRef.current.getBoundingClientRect();
+    const targetRect = event.currentTarget.getBoundingClientRect();
+
+    setLegendTooltip({
+      item,
+      top: targetRect.top - containerRect.top + targetRect.height / 2,
+      left: targetRect.right - containerRect.left + 12
+    });
+  };
+
+  const handleLegendLeave = () => {
+    setLegendTooltip(null);
+  };
+
   return (
     <Card className={className}>
       <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -215,22 +233,49 @@ export default function ExpenseGroupPieChart({
               </ResponsiveContainer>
             </div>
 
-            <div className="grid gap-3">
-              {chartData.groups.map((item) => (
+            <div className="relative" ref={legendContainerRef}>
+              {legendTooltip ? (
                 <div
-                  key={item.key}
-                  className="grid grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-3 text-sm text-slate-700"
+                  className="pointer-events-none absolute z-10 rounded-lg border border-slate-200 bg-white/95 p-2 text-xs text-slate-700 shadow-lg"
+                  style={{
+                    top: legendTooltip.top,
+                    left: legendTooltip.left,
+                    transform: "translateY(-50%)"
+                  }}
                 >
-                  <span
-                    className="h-3 w-3 rounded-full"
-                    style={{ background: item.color }}
-                  />
-                  <span className="truncate">{item.label}</span>
-                  <span className="text-xs text-slate-500">
-                    {formatAmount(item.value)} · {formatPercentage(item.percentage)}
-                  </span>
+                  <p className="mb-1 text-xs font-semibold text-slate-900">
+                    {legendTooltip.item.label}
+                  </p>
+                  <p>{formatAmount(legendTooltip.item.value)}</p>
+                  <p className="text-slate-500">
+                    {formatPercentage(legendTooltip.item.percentage)}
+                  </p>
                 </div>
-              ))}
+              ) : null}
+              <div className="grid gap-3">
+                {chartData.groups.map((item) => (
+                  <div
+                    key={item.key}
+                    className="grid grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-3 text-sm text-slate-700"
+                    tabIndex={0}
+                    role="button"
+                    onMouseEnter={(event) => handleLegendEnter(item, event)}
+                    onMouseLeave={handleLegendLeave}
+                    onFocus={(event) => handleLegendEnter(item, event)}
+                    onBlur={handleLegendLeave}
+                  >
+                    <span
+                      className="h-3 w-3 rounded-full"
+                      style={{ background: item.color }}
+                    />
+                    <span className="truncate">{item.label}</span>
+                    <span className="text-xs text-slate-500">
+                      {formatAmount(item.value)} ·{" "}
+                      {formatPercentage(item.percentage)}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
