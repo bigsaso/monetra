@@ -7,6 +7,9 @@ import { useEffect, useState } from "react";
  * @property {number|string} net_flow_current_month
  * @property {number|string} net_flow_previous_month
  * @property {number|string=} percentage_change
+ * @property {string=} home_currency
+ * @property {string[]=} source_currencies_current_month
+ * @property {string[]=} source_currencies_previous_month
  */
 
 /**

@@ -18,6 +18,8 @@ import { useEffect, useState } from "react";
  * @property {number|string=} projected_total_expenses_current_month
  * @property {number|string=} projected_total_regular_expenses_current_month
  * @property {number|string=} projected_total_investment_expenses_current_month
+ * @property {string=} home_currency
+ * @property {string[]=} source_currencies
  */
 
 /**

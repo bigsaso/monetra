@@ -1,16 +1,17 @@
 "use client";
 
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD"
-});
+import { getConversionNote, getCurrencyFormatter } from "../../lib/currency";
 
 export default function NetFlowSummary({
   netFlow = 0,
   monthLabel = "",
   description = "Income minus expenses for the current month.",
-  percentageChange = null
+  percentageChange = null,
+  currency = "USD",
+  sourceCurrencies = []
 }) {
+  const currencyFormatter = getCurrencyFormatter(currency);
+  const conversionNote = getConversionNote(sourceCurrencies, currency);
   const parsedPercentage = Number(percentageChange);
   const hasPercentage = Number.isFinite(parsedPercentage);
   const formattedPercentage = hasPercentage
@@ -29,7 +30,10 @@ export default function NetFlowSummary({
       <p className="text-xs uppercase tracking-[0.12em] text-slate-500">
         Net flow · {monthLabel}
       </p>
-      <p className="mt-3 text-4xl font-semibold text-slate-900 sm:text-5xl">
+      <p
+        className="mt-3 text-4xl font-semibold text-slate-900 sm:text-5xl"
+        title={conversionNote || undefined}
+      >
         {currencyFormatter.format(netFlow)}
       </p>
       <div className="mt-2 flex items-center gap-2 text-sm">

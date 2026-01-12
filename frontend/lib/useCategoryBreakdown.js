@@ -7,6 +7,8 @@ import { useEffect, useState } from "react";
  * @property {string} category
  * @property {number|string} total_spent
  * @property {number|string} percentage_of_total
+ * @property {string=} home_currency
+ * @property {string[]=} source_currencies
  */
 
 /**

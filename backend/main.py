@@ -18,11 +18,9 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
     and_,
-    case,
     create_engine,
     func,
     insert,
-    or_,
     select,
     update,
 )
@@ -30,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.budget_engine import BudgetRule, Transaction, evaluate_budget
 from backend.csv_parser import CSVParseResult, ParsedTransaction, parse_transactions_csv
+from backend.currency_conversion import StaticRateProvider, convert_amount
 from backend.income_projection import IncomeTransaction, RecurringSchedule, project_income
 from backend.recurring_projection import ActualTransaction, project_recurring_schedule
 
@@ -68,6 +67,7 @@ def get_system_default_currency() -> str:
 
 
 SYSTEM_DEFAULT_CURRENCY = get_system_default_currency()
+FX_PROVIDER = StaticRateProvider()
 
 DEFAULT_CATEGORIES = [
     "Groceries",
@@ -370,6 +370,8 @@ class BudgetEvaluationResponse(BaseModel):
     current_value: Decimal
     remaining: Decimal
     status: str
+    home_currency: str | None = None
+    source_currencies: list[str] | None = None
 
 
 class MonthlyTrendResponse(BaseModel):
@@ -387,18 +389,25 @@ class MonthlyTrendResponse(BaseModel):
     projected_total_expenses_current_month: Decimal | None = None
     projected_total_regular_expenses_current_month: Decimal | None = None
     projected_total_investment_expenses_current_month: Decimal | None = None
+    home_currency: str | None = None
+    source_currencies: list[str] | None = None
 
 
 class NetFlowSummaryResponse(BaseModel):
     net_flow_current_month: Decimal
     net_flow_previous_month: Decimal
     percentage_change: Decimal | None = None
+    home_currency: str | None = None
+    source_currencies_current_month: list[str] | None = None
+    source_currencies_previous_month: list[str] | None = None
 
 
 class CategoryBreakdownResponse(BaseModel):
     category: str
     total_spent: Decimal
     percentage_of_total: Decimal
+    home_currency: str | None = None
+    source_currencies: list[str] | None = None
 
 
 class MonthlyExpenseGroupResponse(BaseModel):
@@ -409,6 +418,11 @@ class MonthlyExpenseGroupResponse(BaseModel):
     investments_total: Decimal
     projected_total_income: Decimal | None = None
     projected_total_expenses: Decimal | None = None
+    home_currency: str | None = None
+    income_source_currencies: list[str] | None = None
+    needs_source_currencies: list[str] | None = None
+    wants_source_currencies: list[str] | None = None
+    investments_source_currencies: list[str] | None = None
 
 
 class IncomeProjectionEntry(BaseModel):
@@ -737,13 +751,77 @@ def parse_month_value(value: str) -> date:
             raise ValueError("Invalid month format. Use YYYY-MM.") from exc
 
 
-def fetch_expense_group_totals(
-    user_id: int, start_date: date, end_date: date
+def coerce_decimal(value: Decimal | float | int | str) -> Decimal:
+    return value if isinstance(value, Decimal) else Decimal(str(value))
+
+
+def safe_normalize_currency(value: str | None, fallback: str) -> str:
+    if not value:
+        return fallback
+    try:
+        return normalize_currency(value)
+    except ValueError:
+        return fallback
+
+
+def convert_amount_safe(
+    amount: Decimal | float | int | str,
+    source_currency: str,
+    target_currency: str,
+) -> Decimal:
+    try:
+        return convert_amount(
+            amount,
+            source_currency,
+            target_currency,
+            rate_provider=FX_PROVIDER,
+        )
+    except ValueError:
+        return coerce_decimal(amount)
+
+
+def sum_converted_amounts(
+    amounts_by_currency: dict[str, Decimal], target_currency: str
+) -> tuple[Decimal, list[str]]:
+    total = Decimal("0")
+    currencies: set[str] = set()
+    for currency, amount in amounts_by_currency.items():
+        normalized_currency = safe_normalize_currency(currency, target_currency)
+        currencies.add(normalized_currency)
+        total += convert_amount_safe(amount, normalized_currency, target_currency)
+    return total, sorted(currencies)
+
+
+def fetch_totals_by_currency(
+    user_id: int, start_date: date, end_date: date, txn_type: str
 ) -> dict[str, Decimal]:
+    total_expr = func.coalesce(func.sum(transactions.c.amount), 0).label("total")
+    stmt = (
+        select(transactions.c.currency, total_expr)
+        .where(
+            transactions.c.user_id == user_id,
+            transactions.c.type == txn_type,
+            transactions.c.date >= start_date,
+            transactions.c.date <= end_date,
+        )
+        .group_by(transactions.c.currency)
+    )
+    with engine.begin() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return {
+        row["currency"]: coerce_decimal(row["total"])
+        for row in rows
+        if row["currency"] is not None
+    }
+
+
+def fetch_expense_group_totals(
+    user_id: int, start_date: date, end_date: date, home_currency: str
+) -> tuple[dict[str, Decimal], dict[str, list[str]]]:
     group_expr = categories.c.group.label("group")
     total_spent_expr = func.coalesce(func.sum(transactions.c.amount), 0).label("total_spent")
     stmt = (
-        select(group_expr, total_spent_expr)
+        select(group_expr, transactions.c.currency, total_spent_expr)
         .select_from(
             transactions.join(
                 categories,
@@ -758,26 +836,38 @@ def fetch_expense_group_totals(
             transactions.c.date <= end_date,
             categories.c.group.isnot(None),
         )
-        .group_by(group_expr)
+        .group_by(group_expr, transactions.c.currency)
     )
     with engine.begin() as conn:
         rows = conn.execute(stmt).mappings().all()
 
-    totals = {
-        "needs": Decimal("0"),
-        "wants": Decimal("0"),
-        "investments": Decimal("0"),
+    totals_by_group: dict[str, dict[str, Decimal]] = {
+        "needs": {},
+        "wants": {},
+        "investments": {},
+    }
+    source_currencies: dict[str, set[str]] = {
+        "needs": set(),
+        "wants": set(),
+        "investments": set(),
     }
     for row in rows:
         group = row["group"]
-        if group not in totals:
+        if group not in totals_by_group:
             continue
-        total_value = row["total_spent"]
-        total_decimal = (
-            total_value if isinstance(total_value, Decimal) else Decimal(str(total_value))
-        )
-        totals[group] = total_decimal
-    return totals
+        currency = safe_normalize_currency(row["currency"], home_currency)
+        total_decimal = coerce_decimal(row["total_spent"])
+        totals_by_group[group][currency] = total_decimal
+        source_currencies[group].add(currency)
+
+    totals: dict[str, Decimal] = {}
+    source_currency_lists: dict[str, list[str]] = {}
+    for group, totals_by_currency in totals_by_group.items():
+        group_total, _ = sum_converted_amounts(totals_by_currency, home_currency)
+        totals[group] = group_total
+        source_currency_lists[group] = sorted(source_currencies[group])
+
+    return totals, source_currency_lists
 
 
 def fetch_income_total(user_id: int, start_date: date, end_date: date) -> Decimal:
@@ -2122,92 +2212,77 @@ def monthly_trends(
     if start_date > end_date:
         raise HTTPException(status_code=400, detail="Start date must be on or before end date.")
 
-    month_expr = func.to_char(transactions.c.date, "YYYY-MM").label("month")
-    income_sum = func.coalesce(
-        func.sum(case((transactions.c.type == "income", transactions.c.amount), else_=0)),
-        0,
-    ).label("total_income")
-    regular_expense_sum = func.coalesce(
-        func.sum(
-            case(
-                (
-                    and_(
-                        transactions.c.type == "expense",
-                        or_(
-                            categories.c.group.is_(None),
-                            categories.c.group != "investments",
-                        ),
-                    ),
-                    transactions.c.amount,
-                ),
-                else_=0,
-            )
-        ),
-        0,
-    ).label("total_regular_expenses")
-    investment_expense_sum = func.coalesce(
-        func.sum(
-            case(
-                (
-                    and_(
-                        transactions.c.type == "expense",
-                        categories.c.group == "investments",
-                    ),
-                    transactions.c.amount,
-                ),
-                else_=0,
-            )
-        ),
-        0,
-    ).label("total_investment_expenses")
-
-    stmt = (
-        select(month_expr, income_sum, regular_expense_sum, investment_expense_sum)
-        .select_from(
-            transactions.outerjoin(
-                categories,
-                (transactions.c.user_id == categories.c.user_id)
-                & (transactions.c.category == categories.c.name),
-            )
-        )
-        .where(
-            transactions.c.user_id == user_id,
-            transactions.c.date >= start_date,
-            transactions.c.date <= end_date,
-        )
-        .group_by(month_expr)
-        .order_by(month_expr)
-    )
-
     with engine.begin() as conn:
-        rows = conn.execute(stmt).mappings().all()
+        home_currency = resolve_default_currency(conn, user_id)
+        rows = conn.execute(
+            select(
+                transactions.c.date,
+                transactions.c.amount,
+                transactions.c.currency,
+                transactions.c.type,
+                categories.c.group.label("category_group"),
+            )
+            .select_from(
+                transactions.outerjoin(
+                    categories,
+                    (transactions.c.user_id == categories.c.user_id)
+                    & (transactions.c.category == categories.c.name),
+                )
+            )
+            .where(
+                transactions.c.user_id == user_id,
+                transactions.c.date >= start_date,
+                transactions.c.date <= end_date,
+            )
+        ).mappings().all()
 
-    totals_by_month = {
-        row["month"]: {
-            "income": row["total_income"],
-            "regular_expenses": row["total_regular_expenses"],
-            "investment_expenses": row["total_investment_expenses"],
-        }
-        for row in rows
-    }
+    totals_by_month: dict[str, dict[str, object]] = {}
+    for row in rows:
+        month_key = row["date"].strftime("%Y-%m")
+        entry = totals_by_month.setdefault(
+            month_key,
+            {
+                "income": {},
+                "regular_expenses": {},
+                "investment_expenses": {},
+                "source_currencies": set(),
+            },
+        )
+        currency = safe_normalize_currency(row["currency"], home_currency)
+        entry["source_currencies"].add(currency)
+        amount = coerce_decimal(row["amount"])
+        txn_type = row["type"].strip().lower()
+        if txn_type == "income":
+            entry["income"][currency] = entry["income"].get(currency, Decimal("0")) + amount
+        elif txn_type == "expense":
+            category_group = row["category_group"]
+            if category_group and category_group.strip().lower() == "investments":
+                entry["investment_expenses"][currency] = (
+                    entry["investment_expenses"].get(currency, Decimal("0")) + amount
+                )
+            else:
+                entry["regular_expenses"][currency] = (
+                    entry["regular_expenses"].get(currency, Decimal("0")) + amount
+                )
+
     projected_totals_by_month: dict[str, dict[str, Decimal]] = {}
     projected_current_month_by_month: dict[str, dict[str, Decimal]] = {}
+    projected_source_currencies_by_month: dict[str, set[str]] = {}
+    projected_current_source_currencies_by_month: dict[str, set[str]] = {}
     next_month_start = shift_month(month_start(today), 1)
     next_month_end = month_end(next_month_start)
     current_month_start = month_start(today)
     current_month_end = month_end(current_month_start)
 
-    def normalize_amount(value: Decimal | float | int | str) -> Decimal:
-        return value if isinstance(value, Decimal) else Decimal(str(value))
-
     def projected_totals_for_range(
         range_start: date, range_end: date
-    ) -> dict[str, Decimal]:
+    ) -> tuple[dict[str, Decimal], set[str]]:
         with engine.begin() as conn:
             schedule_rows = conn.execute(
                 select(
                     pay_schedules.c.id,
                     pay_schedules.c.amount,
+                    pay_schedules.c.currency,
                     pay_schedules.c.start_date,
                     pay_schedules.c.account_id,
                     pay_schedules.c.frequency,
@@ -2228,14 +2303,15 @@ def monthly_trends(
         projected_income = Decimal("0")
         projected_regular_expenses = Decimal("0")
         projected_investment_expenses = Decimal("0")
+        projected_currencies: set[str] = set()
         for row in schedule_rows:
-            schedule_amount = normalize_amount(row["amount"])
             schedule_kind = row["kind"].strip().lower()
             schedule_category_group = (
                 row["category_group"].strip().lower() if row["category_group"] else None
             )
+            schedule_currency = safe_normalize_currency(row["currency"], home_currency)
             schedule = RecurringSchedule(
-                amount=schedule_amount,
+                amount=coerce_decimal(row["amount"]),
                 start_date=row["start_date"],
                 account_id=row["account_id"],
                 frequency=row["frequency"],
@@ -2251,13 +2327,17 @@ def monthly_trends(
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             for projection in schedule_projections:
+                converted_amount = convert_amount_safe(
+                    projection.amount, schedule_currency, home_currency
+                )
+                projected_currencies.add(schedule_currency)
                 if projection.transaction_type == "income":
-                    projected_income += projection.amount
+                    projected_income += converted_amount
                 elif projection.transaction_type == "expense":
                     if schedule_category_group == "investments":
-                        projected_investment_expenses += projection.amount
+                        projected_investment_expenses += converted_amount
                     else:
-                        projected_regular_expenses += projection.amount
+                        projected_regular_expenses += converted_amount
 
         if (
             projected_income > 0
@@ -2268,23 +2348,31 @@ def monthly_trends(
                 "income": projected_income,
                 "regular_expenses": projected_regular_expenses,
                 "investment_expenses": projected_investment_expenses,
-            }
-        return {}
+            }, projected_currencies
+        return {}, set()
 
     if current_month_start <= end_date and current_month_end >= start_date:
-        projected_current_totals = projected_totals_for_range(
+        projected_current_totals, projected_current_currencies = projected_totals_for_range(
             current_month_start, current_month_end
         )
         if projected_current_totals:
             projected_current_month_by_month[current_month_start.strftime("%Y-%m")] = (
                 projected_current_totals
             )
+            projected_current_source_currencies_by_month[
+                current_month_start.strftime("%Y-%m")
+            ] = projected_current_currencies
 
     if next_month_start <= end_date and next_month_end >= start_date:
-        projected_next_totals = projected_totals_for_range(next_month_start, next_month_end)
+        projected_next_totals, projected_next_currencies = projected_totals_for_range(
+            next_month_start, next_month_end
+        )
         if projected_next_totals:
             projected_totals_by_month[next_month_start.strftime("%Y-%m")] = (
                 projected_next_totals
+            )
+            projected_source_currencies_by_month[next_month_start.strftime("%Y-%m")] = (
+                projected_next_currencies
             )
 
     results: list[MonthlyTrendResponse] = []
@@ -2293,14 +2381,21 @@ def monthly_trends(
         totals = totals_by_month.get(
             key,
             {
-                "income": Decimal("0"),
-                "regular_expenses": Decimal("0"),
-                "investment_expenses": Decimal("0"),
+                "income": {},
+                "regular_expenses": {},
+                "investment_expenses": {},
+                "source_currencies": set(),
             },
         )
-        income = totals["income"]
-        regular_expenses = totals["regular_expenses"]
-        investment_expenses = totals["investment_expenses"]
+        income, income_currencies = sum_converted_amounts(
+            totals["income"], home_currency
+        )
+        regular_expenses, regular_expense_currencies = sum_converted_amounts(
+            totals["regular_expenses"], home_currency
+        )
+        investment_expenses, investment_expense_currencies = sum_converted_amounts(
+            totals["investment_expenses"], home_currency
+        )
         expenses = regular_expenses + investment_expenses
         projected_totals = projected_totals_by_month.get(key, {})
         projected_income = projected_totals.get("income")
@@ -2319,6 +2414,14 @@ def monthly_trends(
         projected_current_expenses = (
             (projected_current_regular_expenses or Decimal("0"))
             + (projected_current_investment_expenses or Decimal("0"))
+        )
+        source_currencies = set(totals["source_currencies"])
+        source_currencies.update(income_currencies)
+        source_currencies.update(regular_expense_currencies)
+        source_currencies.update(investment_expense_currencies)
+        source_currencies.update(projected_source_currencies_by_month.get(key, set()))
+        source_currencies.update(
+            projected_current_source_currencies_by_month.get(key, set())
         )
         results.append(
             MonthlyTrendResponse(
@@ -2352,6 +2455,8 @@ def monthly_trends(
                     if projected_current_investment_expenses
                     else None
                 ),
+                home_currency=home_currency,
+                source_currencies=sorted(source_currencies) if source_currencies else None,
             )
         )
     return results
@@ -2377,12 +2482,35 @@ def net_flow_summary(
     previous_start_date = shift_month(start_date, -1)
     previous_end_date = month_end(previous_start_date)
 
-    current_income = fetch_income_total(user_id, start_date, end_date)
-    current_expenses = fetch_expense_total(user_id, start_date, end_date)
+    with engine.begin() as conn:
+        home_currency = resolve_default_currency(conn, user_id)
+
+    current_income_by_currency = fetch_totals_by_currency(
+        user_id, start_date, end_date, "income"
+    )
+    current_expense_by_currency = fetch_totals_by_currency(
+        user_id, start_date, end_date, "expense"
+    )
+    current_income, current_income_currencies = sum_converted_amounts(
+        current_income_by_currency, home_currency
+    )
+    current_expenses, current_expense_currencies = sum_converted_amounts(
+        current_expense_by_currency, home_currency
+    )
     current_net_flow = current_income - current_expenses
 
-    previous_income = fetch_income_total(user_id, previous_start_date, previous_end_date)
-    previous_expenses = fetch_expense_total(user_id, previous_start_date, previous_end_date)
+    previous_income_by_currency = fetch_totals_by_currency(
+        user_id, previous_start_date, previous_end_date, "income"
+    )
+    previous_expense_by_currency = fetch_totals_by_currency(
+        user_id, previous_start_date, previous_end_date, "expense"
+    )
+    previous_income, previous_income_currencies = sum_converted_amounts(
+        previous_income_by_currency, home_currency
+    )
+    previous_expenses, previous_expense_currencies = sum_converted_amounts(
+        previous_expense_by_currency, home_currency
+    )
     previous_net_flow = previous_income - previous_expenses
     previous_count = fetch_transaction_count(user_id, previous_start_date, previous_end_date)
 
@@ -2396,6 +2524,17 @@ def net_flow_summary(
         net_flow_current_month=current_net_flow,
         net_flow_previous_month=previous_net_flow,
         percentage_change=percentage_change,
+        home_currency=home_currency,
+        source_currencies_current_month=sorted(
+            set(current_income_currencies + current_expense_currencies)
+        )
+        if current_income_currencies or current_expense_currencies
+        else None,
+        source_currencies_previous_month=sorted(
+            set(previous_income_currencies + previous_expense_currencies)
+        )
+        if previous_income_currencies or previous_expense_currencies
+        else None,
     )
 
 
@@ -2416,49 +2555,54 @@ def category_breakdown(
 
     category_expr = func.coalesce(transactions.c.category, "Uncategorized").label("category")
     total_spent_expr = func.coalesce(func.sum(transactions.c.amount), 0).label("total_spent")
-
-    total_stmt = select(func.coalesce(func.sum(transactions.c.amount), 0)).where(
-        transactions.c.user_id == user_id,
-        transactions.c.type == "expense",
-        transactions.c.date >= start_date,
-        transactions.c.date <= end_date,
-    )
     stmt = (
-        select(category_expr, total_spent_expr)
+        select(category_expr, transactions.c.currency, total_spent_expr)
         .where(
             transactions.c.user_id == user_id,
             transactions.c.type == "expense",
             transactions.c.date >= start_date,
             transactions.c.date <= end_date,
         )
-        .group_by(category_expr)
-        .order_by(total_spent_expr.desc())
+        .group_by(category_expr, transactions.c.currency)
     )
 
     with engine.begin() as conn:
-        total_spent_value = conn.execute(total_stmt).scalar_one()
+        home_currency = resolve_default_currency(conn, user_id)
         rows = conn.execute(stmt).mappings().all()
 
-    total_spent_decimal = (
-        total_spent_value
-        if isinstance(total_spent_value, Decimal)
-        else Decimal(str(total_spent_value))
-    )
-    if total_spent_decimal <= 0:
+    totals_by_category: dict[str, dict[str, Decimal]] = {}
+    source_currencies_by_category: dict[str, set[str]] = {}
+    for row in rows:
+        category = row["category"]
+        currency = safe_normalize_currency(row["currency"], home_currency)
+        totals_by_category.setdefault(category, {})
+        totals_by_category[category][currency] = coerce_decimal(row["total_spent"])
+        source_currencies_by_category.setdefault(category, set()).add(currency)
+
+    converted_totals: dict[str, Decimal] = {}
+    total_spent_converted = Decimal("0")
+    for category, totals_by_currency in totals_by_category.items():
+        category_total, _ = sum_converted_amounts(totals_by_currency, home_currency)
+        converted_totals[category] = category_total
+        total_spent_converted += category_total
+
+    if total_spent_converted <= 0:
         return []
 
     results: list[CategoryBreakdownResponse] = []
-    for row in rows:
-        category_total = row["total_spent"]
-        category_total_decimal = (
-            category_total if isinstance(category_total, Decimal) else Decimal(str(category_total))
-        )
-        percentage = (category_total_decimal / total_spent_decimal) * Decimal("100")
+    for category, total_value in sorted(
+        converted_totals.items(), key=lambda item: item[1], reverse=True
+    ):
+        percentage = (total_value / total_spent_converted) * Decimal("100")
         results.append(
             CategoryBreakdownResponse(
-                category=row["category"],
-                total_spent=category_total_decimal,
+                category=category,
+                total_spent=total_value,
                 percentage_of_total=percentage,
+                home_currency=home_currency,
+                source_currencies=sorted(source_currencies_by_category.get(category, set()))
+                if source_currencies_by_category.get(category)
+                else None,
             )
         )
     return results
@@ -2483,8 +2627,17 @@ def monthly_expense_groups(
     start_date = month_start(month_date)
     end_date = month_end(month_date)
 
-    totals = fetch_expense_group_totals(user_id, start_date, end_date)
-    income_total = fetch_income_total(user_id, start_date, end_date)
+    with engine.begin() as conn:
+        home_currency = resolve_default_currency(conn, user_id)
+    totals, source_currencies = fetch_expense_group_totals(
+        user_id, start_date, end_date, home_currency
+    )
+    income_by_currency = fetch_totals_by_currency(
+        user_id, start_date, end_date, "income"
+    )
+    income_total, income_currencies = sum_converted_amounts(
+        income_by_currency, home_currency
+    )
     # TODO: Merge projected income/expense totals once forecast pipeline lands.
     return MonthlyExpenseGroupResponse(
         month=month_date.strftime("%Y-%m"),
@@ -2492,6 +2645,11 @@ def monthly_expense_groups(
         needs_total=totals["needs"],
         wants_total=totals["wants"],
         investments_total=totals["investments"],
+        home_currency=home_currency,
+        income_source_currencies=income_currencies if income_currencies else None,
+        needs_source_currencies=source_currencies.get("needs"),
+        wants_source_currencies=source_currencies.get("wants"),
+        investments_source_currencies=source_currencies.get("investments"),
     )
 
 
@@ -2661,6 +2819,7 @@ def evaluate_budget_rules(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     with engine.begin() as conn:
+        home_currency = resolve_default_currency(conn, user_id)
         rule_rows = conn.execute(
             select(budget_rules).where(budget_rules.c.user_id == user_id)
         ).mappings().all()
@@ -2672,16 +2831,20 @@ def evaluate_budget_rules(
             )
         ).mappings().all()
 
-    txn_items = [
-        Transaction(
-            amount=row["amount"],
-            type=row["type"],
-            date=row["date"],
-            category=row["category"],
-            account_id=row["account_id"],
+    source_currencies: set[str] = set()
+    txn_items = []
+    for row in txn_rows:
+        currency = safe_normalize_currency(row["currency"], home_currency)
+        source_currencies.add(currency)
+        txn_items.append(
+            Transaction(
+                amount=convert_amount_safe(row["amount"], currency, home_currency),
+                type=row["type"],
+                date=row["date"],
+                category=row["category"],
+                account_id=row["account_id"],
+            )
         )
-        for row in txn_rows
-    ]
 
     evaluations: list[BudgetEvaluationResponse] = []
     for row in rule_rows:
@@ -2711,6 +2874,8 @@ def evaluate_budget_rules(
                 current_value=result.current_value,
                 remaining=result.remaining,
                 status=result.status,
+                home_currency=home_currency,
+                source_currencies=sorted(source_currencies) if source_currencies else None,
             )
         )
     return evaluations

@@ -10,11 +10,7 @@ import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
 import { useMonthlyExpenseGroups } from "../lib/useMonthlyExpenseGroups";
 import { useMonthlyTrends } from "../lib/useMonthlyTrends";
 import { useNetFlowSummary } from "../lib/useNetFlowSummary";
-
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD"
-});
+import { getConversionNote, getCurrencyFormatter } from "../lib/currency";
 
 const statusBadgeClasses = {
   success: "border-emerald-200 bg-emerald-100 text-emerald-700",
@@ -65,8 +61,13 @@ export default function DashboardClient() {
   const [budgetEvaluations, setBudgetEvaluations] = useState([]);
   const [budgetLoading, setBudgetLoading] = useState(true);
   const [budgetError, setBudgetError] = useState("");
+  const [homeCurrency, setHomeCurrency] = useState("USD");
   const [expenseSummaryMonth, setExpenseSummaryMonth] = useState(() =>
     formatMonthValue(new Date())
+  );
+  const budgetFormatter = useMemo(
+    () => getCurrencyFormatter(homeCurrency),
+    [homeCurrency]
   );
   const nextMonthEndDate = useMemo(() => {
     const today = new Date();
@@ -135,9 +136,28 @@ export default function DashboardClient() {
     }
   };
 
+  const loadHomeCurrency = async () => {
+    try {
+      const response = await fetch("/api/user-settings");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load user settings.");
+      }
+      const data = await response.json();
+      const resolved = String(data?.home_currency || "").trim().toUpperCase();
+      if (resolved) {
+        setHomeCurrency(resolved);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     loadData();
     loadBudgetEvaluations();
+    loadHomeCurrency();
   }, []);
 
   const expenseSummaryNetFlow = useMemo(() => {
@@ -218,6 +238,8 @@ export default function DashboardClient() {
           monthLabel={formatMonthLabel(expenseSummaryMonth)}
           netFlow={expenseSummaryNetFlow}
           netFlowPercentageChange={netFlowSummary?.percentage_change ?? null}
+          netFlowSourceCurrencies={netFlowSummary?.source_currencies_current_month}
+          homeCurrency={homeCurrency}
           netFlowLoading={netFlowLoading}
           onPreviousMonth={handleExpenseSummaryPreviousMonth}
           onNextMonth={handleExpenseSummaryNextMonth}
@@ -229,7 +251,10 @@ export default function DashboardClient() {
           categoryBreakdownError={expenseSummaryBreakdownError}
         />
 
-        <SpendingByCategoryLineChartCard className="md:col-span-6" />
+        <SpendingByCategoryLineChartCard
+          className="md:col-span-6"
+          homeCurrency={homeCurrency}
+        />
 
         <Card className="md:col-span-6">
           <CardHeader>
@@ -240,7 +265,7 @@ export default function DashboardClient() {
             {trendsLoading ? <p>Loading monthly cashflow...</p> : null}
             {trendsError ? <p className="text-rose-600">{trendsError}</p> : null}
             {!trendsLoading && !trendsError ? (
-              <MonthlyCashflowChart data={monthlyTrends} />
+              <MonthlyCashflowChart data={monthlyTrends} homeCurrency={homeCurrency} />
             ) : null}
           </CardContent>
         </Card>
@@ -262,6 +287,10 @@ export default function DashboardClient() {
                 {budgetEvaluations.map((rule) => {
                   const status = budgetStatus(rule);
                   const progressValue = Math.round(budgetProgress(rule) * 100);
+                  const conversionNote = getConversionNote(
+                    rule.source_currencies,
+                    homeCurrency
+                  );
                   return (
                     <article
                       key={rule.rule_id}
@@ -272,11 +301,14 @@ export default function DashboardClient() {
                           <p className="text-sm font-semibold text-slate-800">
                             {budgetRuleName(rule)}
                           </p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {currencyFormatter.format(
+                          <p
+                            className="mt-1 text-xs text-slate-500"
+                            title={conversionNote || undefined}
+                          >
+                            {budgetFormatter.format(
                               Number(rule.current_value || 0)
                             )}{" "}
-                            of {currencyFormatter.format(Number(rule.amount || 0))}
+                            of {budgetFormatter.format(Number(rule.amount || 0))}
                           </p>
                         </div>
                         <span
@@ -308,7 +340,7 @@ export default function DashboardClient() {
             )}
           </CardContent>
         </Card>
-        <ExpenseLineChart className="md:col-span-6" />
+        <ExpenseLineChart className="md:col-span-6" homeCurrency={homeCurrency} />
       </main>
     </div>
   );

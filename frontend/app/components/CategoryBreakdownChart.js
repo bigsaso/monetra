@@ -2,13 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { Cell, Label, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD"
-});
-
-const formatAmount = (value) => currencyFormatter.format(value);
+import { getConversionNote, getCurrencyFormatter } from "../../lib/currency";
 
 const formatPercentage = (value) => `${value.toFixed(1)}%`;
 
@@ -23,15 +17,20 @@ const palette = [
   "#d1495b"
 ];
 
-export default function CategoryBreakdownChart({ data }) {
+export default function CategoryBreakdownChart({ data, currency = "USD" }) {
   const legendContainerRef = useRef(null);
   const [legendTooltip, setLegendTooltip] = useState(null);
+  const currencyFormatter = useMemo(
+    () => getCurrencyFormatter(currency),
+    [currency]
+  );
   const chartData = useMemo(
     () =>
       (data || []).map((item, index) => ({
         category: item.category || "Uncategorized",
         totalSpent: Number(item.total_spent || 0),
         percentage: Number(item.percentage_of_total || 0),
+        sourceCurrencies: item.source_currencies || [],
         color: palette[index % palette.length]
       })),
     [data]
@@ -55,7 +54,7 @@ export default function CategoryBreakdownChart({ data }) {
           textAnchor="middle"
           className="fill-slate-900 text-sm font-semibold"
         >
-          {formatAmount(totalSpent)}
+          {currencyFormatter.format(totalSpent)}
         </text>
       </>
     );
@@ -65,15 +64,20 @@ export default function CategoryBreakdownChart({ data }) {
     if (!active || !payload?.length) return null;
     const chartEntry = payload[0]?.payload;
     if (!chartEntry) return null;
+    const conversionNote = getConversionNote(
+      chartEntry.sourceCurrencies,
+      currency
+    );
     return (
       <div className="rounded-lg border border-slate-200 bg-white/95 p-2 text-xs text-slate-700 shadow-lg">
         <p className="mb-1 text-xs font-semibold text-slate-900">
           {chartEntry.category}
         </p>
-        <p>{formatAmount(chartEntry.totalSpent)}</p>
+        <p>{currencyFormatter.format(chartEntry.totalSpent)}</p>
         <p className="text-slate-500">
           {formatPercentage(chartEntry.percentage)}
         </p>
+        {conversionNote ? <p className="text-slate-500">{conversionNote}</p> : null}
       </div>
     );
   };
@@ -141,10 +145,15 @@ export default function CategoryBreakdownChart({ data }) {
               <p className="mb-1 text-xs font-semibold text-slate-900">
                 {legendTooltip.item.category}
               </p>
-              <p>{formatAmount(legendTooltip.item.totalSpent)}</p>
+              <p>{currencyFormatter.format(legendTooltip.item.totalSpent)}</p>
               <p className="text-slate-500">
                 {formatPercentage(legendTooltip.item.percentage)}
               </p>
+              {getConversionNote(legendTooltip.item.sourceCurrencies, currency) ? (
+                <p className="text-slate-500">
+                  {getConversionNote(legendTooltip.item.sourceCurrencies, currency)}
+                </p>
+              ) : null}
             </div>
           ) : null}
           <div className="grid gap-3">

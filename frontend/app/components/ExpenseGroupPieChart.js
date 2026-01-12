@@ -10,12 +10,7 @@ import {
   CardTitle
 } from "./ui/card";
 import { Button } from "./ui/button";
-
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0
-});
+import { getConversionNote, getCurrencyFormatter } from "../../lib/currency";
 
 const formatMonthValue = (date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -42,21 +37,22 @@ const palette = {
   overbudget: "hsl(var(--chart-overbudget))"
 };
 
-const formatAmount = (value) => currencyFormatter.format(value);
-
 const formatPercentage = (value) => `${value.toFixed(1)}%`;
 
-const CustomTooltip = ({ active, payload }) => {
+const CustomTooltip = ({ active, payload, currency }) => {
   if (!active || !payload?.length) return null;
   const chartEntry = payload[0]?.payload;
   if (!chartEntry) return null;
+  const formatter = getCurrencyFormatter(currency, { maximumFractionDigits: 0 });
+  const conversionNote = getConversionNote(chartEntry.sourceCurrencies, currency);
   return (
     <div className="rounded-lg border border-slate-200 bg-white/95 p-2 text-xs text-slate-700 shadow-lg">
       <p className="mb-1 text-xs font-semibold text-slate-900">
         {chartEntry.label}
       </p>
-      <p>{formatAmount(chartEntry.value)}</p>
+      <p>{formatter.format(chartEntry.value)}</p>
       <p className="text-slate-500">{formatPercentage(chartEntry.percentage)}</p>
+      {conversionNote ? <p className="text-slate-500">{conversionNote}</p> : null}
     </div>
   );
 };
@@ -70,10 +66,15 @@ export default function ExpenseGroupPieChart({
   loading = false,
   error = "",
   className = "",
-  showMonthControls = true
+  showMonthControls = true,
+  currency = "USD"
 }) {
   const legendContainerRef = useRef(null);
   const [legendTooltip, setLegendTooltip] = useState(null);
+  const currencyFormatter = useMemo(
+    () => getCurrencyFormatter(currency, { maximumFractionDigits: 0 }),
+    [currency]
+  );
   const resolvedMonth = useMemo(
     () => month || formatMonthValue(new Date()),
     [month]
@@ -90,24 +91,40 @@ export default function ExpenseGroupPieChart({
     const savingsValue = Math.max(0, savings);
     const overbudgetValue = Math.max(0, -savings);
 
+    const incomeSources = data?.income_source_currencies || [];
+    const needsSources = data?.needs_source_currencies || [];
+    const wantsSources = data?.wants_source_currencies || [];
+    const investmentsSources = data?.investments_source_currencies || [];
+    const combinedSources = Array.from(
+      new Set([
+        ...incomeSources,
+        ...needsSources,
+        ...wantsSources,
+        ...investmentsSources
+      ])
+    );
+
     const groups = [
       {
         key: "needs",
         label: "Needs",
         value: needs,
-        color: palette.needs
+        color: palette.needs,
+        sourceCurrencies: needsSources
       },
       {
         key: "wants",
         label: "Wants",
         value: wants,
-        color: palette.wants
+        color: palette.wants,
+        sourceCurrencies: wantsSources
       },
       {
         key: "investments",
         label: "Investments",
         value: investments,
-        color: palette.investments
+        color: palette.investments,
+        sourceCurrencies: investmentsSources
       }
     ];
 
@@ -116,14 +133,16 @@ export default function ExpenseGroupPieChart({
         key: "savings",
         label: "Savings",
         value: savingsValue,
-        color: palette.savings
+        color: palette.savings,
+        sourceCurrencies: combinedSources
       });
     } else if (overbudgetValue > 0) {
       groups.push({
         key: "overbudget",
         label: "Overbudget",
         value: overbudgetValue,
-        color: palette.overbudget
+        color: palette.overbudget,
+        sourceCurrencies: combinedSources
       });
     }
 
@@ -232,7 +251,7 @@ export default function ExpenseGroupPieChart({
                       <Cell key={entry.key} fill={entry.color} />
                     ))}
                   </Pie>
-                  <Tooltip content={<CustomTooltip />} />
+                  <Tooltip content={<CustomTooltip currency={currency} />} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -250,10 +269,18 @@ export default function ExpenseGroupPieChart({
                   <p className="mb-1 text-xs font-semibold text-slate-900">
                     {legendTooltip.item.label}
                   </p>
-                  <p>{formatAmount(legendTooltip.item.value)}</p>
+                  <p>{currencyFormatter.format(legendTooltip.item.value)}</p>
                   <p className="text-slate-500">
                     {formatPercentage(legendTooltip.item.percentage)}
                   </p>
+                  {getConversionNote(legendTooltip.item.sourceCurrencies, currency) ? (
+                    <p className="text-slate-500">
+                      {getConversionNote(
+                        legendTooltip.item.sourceCurrencies,
+                        currency
+                      )}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
               <div className="grid gap-3">
@@ -274,7 +301,7 @@ export default function ExpenseGroupPieChart({
                     />
                     <span className="truncate">{item.label}</span>
                     <span className="text-xs text-slate-500">
-                      {formatAmount(item.value)} ·{" "}
+                      {currencyFormatter.format(item.value)} ·{" "}
                       {formatPercentage(item.percentage)}
                     </span>
                   </div>

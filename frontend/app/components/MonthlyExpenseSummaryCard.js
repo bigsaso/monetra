@@ -18,6 +18,8 @@ export default function MonthlyExpenseSummaryCard({
   monthLabel,
   netFlow,
   netFlowPercentageChange = null,
+  netFlowSourceCurrencies = [],
+  homeCurrency = "USD",
   netFlowLoading = false,
   onPreviousMonth,
   onNextMonth,
@@ -57,6 +59,8 @@ export default function MonthlyExpenseSummaryCard({
             month={month}
             description="Income minus expenses for the selected month."
             percentageChange={netFlowLoading ? null : netFlowPercentageChange}
+            currency={homeCurrency}
+            sourceCurrencies={netFlowSourceCurrencies}
           />
         </div>
 
@@ -70,6 +74,7 @@ export default function MonthlyExpenseSummaryCard({
             title="Expense groups"
             description="Needs, wants, investments, and savings this month."
             showMonthControls={false}
+            currency={homeCurrency}
           />
 
           <Card className="shadow-none">
@@ -87,7 +92,11 @@ export default function MonthlyExpenseSummaryCard({
                 <p className="text-rose-600">{categoryBreakdownError}</p>
               ) : null}
               {!categoryBreakdownLoading && !categoryBreakdownError ? (
-                <CategoryBreakdownChart data={categoryBreakdown} month={month} />
+                <CategoryBreakdownChart
+                  data={categoryBreakdown}
+                  month={month}
+                  currency={homeCurrency}
+                />
               ) : null}
             </CardContent>
           </Card>

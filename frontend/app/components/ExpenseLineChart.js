@@ -12,12 +12,7 @@ import {
   YAxis
 } from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0
-});
+import { convertAmount, getConversionNote, getCurrencyFormatter } from "../../lib/currency";
 
 const RESOLUTIONS = [
   { value: "daily", label: "Daily" },
@@ -183,7 +178,8 @@ const writeStoredAccountId = (value) => {
 export default function ExpenseLineChart({
   account_id = "",
   account_name = "",
-  className = "lg:col-span-12"
+  className = "lg:col-span-12",
+  homeCurrency = "USD"
 }) {
   const [accounts, setAccounts] = useState([]);
   const [accountTransactions, setAccountTransactions] = useState([]);
@@ -194,6 +190,10 @@ export default function ExpenseLineChart({
   const [timeframe, setTimeframe] = useState("1Y");
   const [selectedAccountId, setSelectedAccountId] = useState(
     normalizeId(account_id)
+  );
+  const currencyFormatter = useMemo(
+    () => getCurrencyFormatter(homeCurrency, { maximumFractionDigits: 0 }),
+    [homeCurrency]
   );
 
   useEffect(() => {
@@ -314,11 +314,20 @@ export default function ExpenseLineChart({
       const key = formatBucketKey(bucketStart, resolution);
       const existing = totals.get(key) || {
         date: bucketStart,
-        total: 0
+        total: 0,
+        sourceCurrencies: new Set()
       };
-      existing.total += Number(transaction.amount || 0);
+      const convertedAmount = convertAmount(
+        transaction.amount,
+        transaction.currency || homeCurrency,
+        homeCurrency
+      );
+      existing.total += convertedAmount;
+      if (transaction.currency) {
+        existing.sourceCurrencies.add(transaction.currency);
+      }
       totals.set(key, existing);
-      amountTotal += Number(transaction.amount || 0);
+      amountTotal += convertedAmount;
     });
 
     let bucketCount = 0;
@@ -338,13 +347,16 @@ export default function ExpenseLineChart({
       seriesData.push({
         label: formatBucketLabel(cursor, resolution),
         total: entry ? entry.total : 0,
-        average: averagePerBucket
+        average: averagePerBucket,
+        sourceCurrencies: entry?.sourceCurrencies
+          ? Array.from(entry.sourceCurrencies)
+          : []
       });
       cursor = addInterval(cursor, resolution);
     }
 
     return { series: seriesData };
-  }, [accountIds, resolution, timeframe, accountTransactions]);
+  }, [accountIds, homeCurrency, resolution, timeframe, accountTransactions]);
 
   useEffect(() => {
     let isMounted = true;
@@ -497,6 +509,10 @@ export default function ExpenseLineChart({
                         );
                         const totalValue = totalEntry?.value ?? 0;
                         const averageValue = averageEntry?.value ?? 0;
+                        const conversionNote = getConversionNote(
+                          payload[0]?.payload?.sourceCurrencies,
+                          homeCurrency
+                        );
                         return (
                           <div className="rounded-lg border border-slate-200 bg-white/95 p-2 text-xs text-slate-700 shadow-lg">
                             <p className="mb-1 text-xs font-semibold text-slate-900">
@@ -506,6 +522,9 @@ export default function ExpenseLineChart({
                             <p className="text-slate-500">
                               {averageLabel}: {currencyFormatter.format(averageValue)}
                             </p>
+                            {conversionNote ? (
+                              <p className="text-slate-500">{conversionNote}</p>
+                            ) : null}
                           </div>
                         );
                       }}

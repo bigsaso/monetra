@@ -12,22 +12,18 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD"
-});
-
-const formatAmount = (value) => currencyFormatter.format(value);
+import { getConversionNote, getCurrencyFormatter } from "../../lib/currency";
 
 const formatMonthLabel = (value) => value || "-";
 
 const toMonthKey = (value) =>
   `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}`;
 
-const CustomTooltip = ({ active, payload, label }) => {
+const CustomTooltip = ({ active, payload, label, currency }) => {
   if (!active || !payload?.length) return null;
   const data = payload[0]?.payload || {};
+  const formatter = getCurrencyFormatter(currency);
+  const conversionNote = getConversionNote(data.sourceCurrencies, currency);
   const hasProjected =
     Number(data.projectedIncome || 0) > 0 ||
     Number(data.projectedRegularExpenses || 0) > 0 ||
@@ -42,30 +38,36 @@ const CustomTooltip = ({ active, payload, label }) => {
       <p className="mb-1 text-xs font-semibold text-slate-900">
         {formatMonthLabel(label)}
       </p>
-      <p>Actual income: {formatAmount(data.income || 0)}</p>
-      <p>Actual expenses: {formatAmount(data.regularExpenses || 0)}</p>
-      <p>Actual investments: {formatAmount(data.investmentExpenses || 0)}</p>
-      <p>Actual net: {formatAmount(data.net || 0)}</p>
+      <p>Actual income: {formatter.format(data.income || 0)}</p>
+      <p>Actual expenses: {formatter.format(data.regularExpenses || 0)}</p>
+      <p>Actual investments: {formatter.format(data.investmentExpenses || 0)}</p>
+      <p>Actual net: {formatter.format(data.net || 0)}</p>
       {hasProjected ? (
-        <p>Projected income: {formatAmount(data.projectedIncome || 0)}</p>
+        <p>Projected income: {formatter.format(data.projectedIncome || 0)}</p>
       ) : null}
       {hasProjected ? (
         <p>
-          Projected expenses: {formatAmount(data.projectedRegularExpenses || 0)}
+          Projected expenses: {formatter.format(data.projectedRegularExpenses || 0)}
         </p>
       ) : null}
       {hasProjected ? (
         <p>
           Projected investments:{" "}
-          {formatAmount(data.projectedInvestmentExpenses || 0)}
+          {formatter.format(data.projectedInvestmentExpenses || 0)}
         </p>
       ) : null}
-      {hasProjected ? <p>Projected net: {formatAmount(projectedNet)}</p> : null}
+      {hasProjected ? <p>Projected net: {formatter.format(projectedNet)}</p> : null}
+      {conversionNote ? <p className="text-slate-500">{conversionNote}</p> : null}
     </div>
   );
 };
 
-export default function MonthlyCashflowChart({ data }) {
+export default function MonthlyCashflowChart({ data, homeCurrency = "USD" }) {
+  const currencyFormatter = useMemo(
+    () => getCurrencyFormatter(homeCurrency),
+    [homeCurrency]
+  );
+  const formatAmount = (value) => currencyFormatter.format(value);
   const chartData = useMemo(
     () => {
       const today = new Date();
@@ -122,6 +124,7 @@ export default function MonthlyCashflowChart({ data }) {
           regularExpenses,
           investmentExpenses,
           net,
+          sourceCurrencies: item.source_currencies || [],
           incomeProjectedRemainder: Math.max(projectedIncomeTotal - income, 0),
           regularExpensesProjectedRemainder: Math.max(
             projectedRegularExpensesTotal - regularExpenses,
@@ -168,7 +171,7 @@ export default function MonthlyCashflowChart({ data }) {
               tickLine={false}
             />
             <Tooltip
-              content={<CustomTooltip />}
+              content={<CustomTooltip currency={homeCurrency} />}
               cursor={{ fill: "rgba(46, 47, 51, 0.04)" }}
               wrapperStyle={{ outline: "none" }}
             />

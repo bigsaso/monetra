@@ -11,12 +11,7 @@ import {
   YAxis
 } from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0
-});
+import { convertAmount, getConversionNote, getCurrencyFormatter } from "../../lib/currency";
 
 const RESOLUTIONS = [
   { value: "daily", label: "Daily" },
@@ -149,7 +144,10 @@ const getCategoryColor = (name) => {
   return LINE_COLORS[Math.abs(hash) % LINE_COLORS.length];
 };
 
-export default function SpendingByCategoryLineChartCard({ className = "" }) {
+export default function SpendingByCategoryLineChartCard({
+  className = "",
+  homeCurrency = "USD"
+}) {
   const [categories, setCategories] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
@@ -158,6 +156,10 @@ export default function SpendingByCategoryLineChartCard({ className = "" }) {
   const [error, setError] = useState("");
   const [resolution, setResolution] = useState("weekly");
   const [timeframe, setTimeframe] = useState("3M");
+  const currencyFormatter = useMemo(
+    () => getCurrencyFormatter(homeCurrency, { maximumFractionDigits: 0 }),
+    [homeCurrency]
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -267,9 +269,21 @@ export default function SpendingByCategoryLineChartCard({ className = "" }) {
       const date = parseDate(transaction.date);
       const bucketStart = getBucketStart(date, resolution);
       const key = formatBucketKey(bucketStart, resolution);
-      const existing = totals.get(key) || { date: bucketStart, values: {} };
+      const existing = totals.get(key) || {
+        date: bucketStart,
+        values: {},
+        sourceCurrencies: new Set()
+      };
       const name = transaction.category || "Uncategorized";
-      existing.values[name] = (existing.values[name] || 0) + Number(transaction.amount || 0);
+      const convertedAmount = convertAmount(
+        transaction.amount,
+        transaction.currency || homeCurrency,
+        homeCurrency
+      );
+      existing.values[name] = (existing.values[name] || 0) + convertedAmount;
+      if (transaction.currency) {
+        existing.sourceCurrencies.add(transaction.currency);
+      }
       totals.set(key, existing);
     });
 
@@ -279,7 +293,12 @@ export default function SpendingByCategoryLineChartCard({ className = "" }) {
     while (cursor.getTime() <= end.getTime()) {
       const key = formatBucketKey(cursor, resolution);
       const entry = totals.get(key);
-      const row = { label: formatBucketLabel(cursor, resolution) };
+      const row = {
+        label: formatBucketLabel(cursor, resolution),
+        sourceCurrencies: entry?.sourceCurrencies
+          ? Array.from(entry.sourceCurrencies)
+          : []
+      };
       selectedCategories.forEach((category) => {
         row[category] = entry?.values?.[category] || 0;
       });
@@ -288,7 +307,7 @@ export default function SpendingByCategoryLineChartCard({ className = "" }) {
     }
 
     return { series: seriesData, selectedCategoryList: selectedCategories };
-  }, [resolution, selectedCategories, timeframe, transactions]);
+  }, [homeCurrency, resolution, selectedCategories, timeframe, transactions]);
 
   const selectClass =
     "mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10";
@@ -421,6 +440,10 @@ export default function SpendingByCategoryLineChartCard({ className = "" }) {
                     <Tooltip
                       content={({ active, payload, label }) => {
                         if (!active || !payload?.length) return null;
+                        const conversionNote = getConversionNote(
+                          payload[0]?.payload?.sourceCurrencies,
+                          homeCurrency
+                        );
                         return (
                           <div className="rounded-lg border border-slate-200 bg-white/95 p-2 text-xs text-slate-700 shadow-lg">
                             <p className="mb-1 text-xs font-semibold text-slate-900">{label}</p>
@@ -434,6 +457,9 @@ export default function SpendingByCategoryLineChartCard({ className = "" }) {
                                 <span>{currencyFormatter.format(entry.value || 0)}</span>
                               </div>
                             ))}
+                            {conversionNote ? (
+                              <p className="mt-1 text-slate-500">{conversionNote}</p>
+                            ) : null}
                           </div>
                         );
                       }}

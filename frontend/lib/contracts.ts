@@ -6,6 +6,11 @@ export type MonthlyExpenseGroupBreakdown = {
   investments_total: number | string;
   projected_total_income?: number | string;
   projected_total_expenses?: number | string;
+  home_currency?: string;
+  income_source_currencies?: string[];
+  needs_source_currencies?: string[];
+  wants_source_currencies?: string[];
+  investments_source_currencies?: string[];
 };
 
 export type MonthlyExpenseGroupsState = {
