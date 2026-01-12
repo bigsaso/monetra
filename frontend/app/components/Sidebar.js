@@ -19,11 +19,33 @@ const isRouteActive = (pathname, href) => {
   return pathname === href || pathname.startsWith(`${href}/`);
 };
 
-export default function Sidebar() {
+export default function Sidebar({ isOpen = false, onClose }) {
   const pathname = usePathname();
 
   return (
-    <aside className="fixed inset-y-0 left-0 flex w-64 flex-col border-r border-slate-200/80 bg-white/90 px-4 py-6 backdrop-blur">
+    <aside
+      className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200/80 bg-white/90 px-4 py-6 backdrop-blur transition-transform duration-200 ease-out md:translate-x-0 ${
+        isOpen ? "translate-x-0" : "-translate-x-full"
+      } relative`}
+    >
+      <button
+        type="button"
+        className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 md:hidden"
+        onClick={onClose}
+        aria-label="Close sidebar"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          className="h-4 w-4"
+        >
+          <path d="M6 6l12 12" />
+          <path d="M18 6l-12 12" />
+        </svg>
+      </button>
       <div className="px-2 pb-6">
         <div className="flex flex-col items-start gap-3">
           <Image src="/logo.svg" alt="Monetra" width={128} height={128} />
