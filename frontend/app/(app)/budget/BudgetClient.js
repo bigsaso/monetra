@@ -22,6 +22,7 @@ import {
   TableHeader,
   TableRow
 } from "../../components/ui/table";
+import { CURRENCY_OPTIONS } from "../../../lib/currencies";
 
 const ruleTypeOptions = [
   { value: "category_cap", label: "Category cap" },
@@ -54,6 +55,12 @@ export default function BudgetClient() {
   const [rulesError, setRulesError] = useState("");
   const [categoriesError, setCategoriesError] = useState("");
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [homeCurrency, setHomeCurrency] = useState(
+    CURRENCY_OPTIONS.find((option) => option.value)?.value || "USD"
+  );
+  const [homeCurrencyLoading, setHomeCurrencyLoading] = useState(true);
+  const [homeCurrencySaving, setHomeCurrencySaving] = useState(false);
+  const [homeCurrencyError, setHomeCurrencyError] = useState("");
 
   const currencyFormatter = useMemo(
     () =>
@@ -61,6 +68,11 @@ export default function BudgetClient() {
         style: "currency",
         currency: "USD"
       }),
+    []
+  );
+
+  const homeCurrencyOptions = useMemo(
+    () => CURRENCY_OPTIONS.filter((option) => option.value),
     []
   );
 
@@ -171,10 +183,54 @@ export default function BudgetClient() {
     }
   };
 
+  const loadUserSettings = async () => {
+    setHomeCurrencyLoading(true);
+    setHomeCurrencyError("");
+    try {
+      const response = await fetch("/api/user-settings");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load user settings.");
+      }
+      const data = await response.json();
+      setHomeCurrency(data.home_currency || "");
+    } catch (err) {
+      setHomeCurrencyError(err.message);
+    } finally {
+      setHomeCurrencyLoading(false);
+    }
+  };
+
+  const saveHomeCurrency = async () => {
+    if (!homeCurrency) {
+      setHomeCurrencyError("Select a home currency.");
+      return;
+    }
+    setHomeCurrencySaving(true);
+    setHomeCurrencyError("");
+    try {
+      const response = await fetch("/api/user-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ home_currency: homeCurrency })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to update home currency.");
+      }
+      setHomeCurrency(data.home_currency || homeCurrency);
+    } catch (err) {
+      setHomeCurrencyError(err.message);
+    } finally {
+      setHomeCurrencySaving(false);
+    }
+  };
+
   useEffect(() => {
     loadAccounts();
     loadRules();
     loadCategories();
+    loadUserSettings();
   }, []);
 
   useEffect(() => {
@@ -377,6 +433,46 @@ export default function BudgetClient() {
       </p>
 
       <div className="mt-8 grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Home currency</CardTitle>
+            <CardDescription>
+              Choose the currency used for totals and reporting.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4">
+              <label className="text-sm text-slate-600">
+                Preferred currency
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  value={homeCurrency}
+                  onChange={(event) => setHomeCurrency(event.target.value)}
+                  disabled={homeCurrencyLoading}
+                >
+                  {homeCurrencyOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {homeCurrencyError ? (
+                <p className="text-sm text-rose-600">{homeCurrencyError}</p>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={saveHomeCurrency}
+                  disabled={homeCurrencySaving || homeCurrencyLoading}
+                  className="rounded-md border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Save home currency
+                </button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader>
             <CardTitle>Create rule</CardTitle>

@@ -193,6 +193,16 @@ class UserResponse(BaseModel):
     created_at: datetime | None = None
 
 
+class UserSettingsPayload(BaseModel):
+    home_currency: str | None = None
+
+
+class UserSettingsResponse(BaseModel):
+    id: int
+    email: str
+    home_currency: str
+
+
 class AccountBase(BaseModel):
     name: str
     type: str
@@ -579,6 +589,17 @@ def resolve_default_currency(conn, user_id: int) -> str:
             return normalize_currency(home_currency)
         except ValueError:
             pass
+    first_currency = conn.execute(
+        select(transactions.c.currency)
+        .where(transactions.c.user_id == user_id)
+        .order_by(transactions.c.id.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if first_currency:
+        try:
+            return normalize_currency(first_currency)
+        except ValueError:
+            pass
     return SYSTEM_DEFAULT_CURRENCY
 
 
@@ -586,6 +607,23 @@ def resolve_currency(value: str | None, conn, user_id: int) -> str:
     if value:
         return normalize_currency(value)
     return resolve_default_currency(conn, user_id)
+
+
+def set_home_currency_if_missing(conn, user_id: int, currency: str) -> None:
+    current = conn.execute(
+        select(users.c.home_currency).where(users.c.id == user_id)
+    ).scalar_one_or_none()
+    if current:
+        try:
+            normalize_currency(current)
+            return
+        except ValueError:
+            pass
+    conn.execute(
+        update(users)
+        .where(users.c.id == user_id)
+        .values(home_currency=currency)
+    )
 
 
 def ensure_default_categories(conn, user_id: int) -> None:
@@ -823,6 +861,54 @@ def login(payload: CredentialsPayload) -> UserResponse:
         raise HTTPException(status_code=401, detail="Invalid credentials.")
 
     return UserResponse(id=row["id"], email=row["email"], created_at=row["created_at"])
+
+
+@app.get("/users/me/settings", response_model=UserSettingsResponse)
+def get_user_settings(
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> UserSettingsResponse:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        row = conn.execute(select(users).where(users.c.id == user_id)).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found.")
+        resolved_home_currency = resolve_default_currency(conn, user_id)
+        if not row["home_currency"] and resolved_home_currency:
+            set_home_currency_if_missing(conn, user_id, resolved_home_currency)
+    return UserSettingsResponse(
+        id=row["id"],
+        email=row["email"],
+        home_currency=resolved_home_currency,
+    )
+
+
+@app.put("/users/me/settings", response_model=UserSettingsResponse)
+def update_user_settings(
+    payload: UserSettingsPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> UserSettingsResponse:
+    user_id = get_user_id(x_user_id)
+    if payload.home_currency is None:
+        raise HTTPException(status_code=400, detail="Home currency required.")
+    try:
+        normalized_currency = normalize_currency(payload.home_currency)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(users)
+            .where(users.c.id == user_id)
+            .values(home_currency=normalized_currency)
+            .returning(users.c.id, users.c.email, users.c.home_currency)
+        )
+        row = result.mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found.")
+    return UserSettingsResponse(
+        id=row["id"],
+        email=row["email"],
+        home_currency=row["home_currency"],
+    )
 
 
 @app.get("/categories", response_model=list[CategoryResponse])
@@ -1595,6 +1681,7 @@ def commit_transaction_import(
 
     with engine.begin() as conn:
         default_currency = resolve_default_currency(conn, user_id)
+        set_home_currency_if_missing(conn, user_id, default_currency)
         for row in insert_rows:
             row["currency"] = default_currency
         account_rows = conn.execute(
@@ -1632,6 +1719,7 @@ def create_transaction(
             resolved_currency = resolve_currency(payload.currency, conn, user_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        set_home_currency_if_missing(conn, user_id, resolved_currency)
         investment_entry = None
         if category_group == "investments":
             try:
