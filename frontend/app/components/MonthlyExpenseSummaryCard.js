@@ -37,11 +37,11 @@ export default function MonthlyExpenseSummaryCard({
             Net flow and expense mix for {monthLabel}.
           </CardDescription>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
           <Button type="button" variant="outline" onClick={onPreviousMonth}>
             Prev
           </Button>
-          <span className="min-w-[140px] text-center text-sm font-medium text-slate-700">
+          <span className="min-w-[120px] text-center text-sm font-medium text-slate-700 sm:min-w-[140px]">
             {monthLabel}
           </span>
           <Button type="button" variant="outline" onClick={onNextMonth}>

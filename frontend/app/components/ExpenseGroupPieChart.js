@@ -176,7 +176,7 @@ export default function ExpenseGroupPieChart({
           <CardDescription>{description}</CardDescription>
         </div>
         {showMonthControls ? (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
             <Button
               type="button"
               variant="outline"
@@ -185,7 +185,7 @@ export default function ExpenseGroupPieChart({
             >
               Prev
             </Button>
-            <span className="min-w-[140px] text-center text-sm font-medium text-slate-700">
+            <span className="min-w-[120px] text-center text-sm font-medium text-slate-700 sm:min-w-[140px]">
               {formatMonthLabel(resolvedMonth)}
             </span>
             <Button
@@ -210,8 +210,12 @@ export default function ExpenseGroupPieChart({
           </p>
         ) : (
           <div className="grid items-center gap-6 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]">
-            <div className="w-full min-w-[220px]" role="img" aria-label={title}>
-              <ResponsiveContainer width="100%" height={240}>
+            <div
+              className="h-[200px] w-full min-w-[220px] sm:h-[240px]"
+              role="img"
+              aria-label={title}
+            >
+              <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={chartData.groups}

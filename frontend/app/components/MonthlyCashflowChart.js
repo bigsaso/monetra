@@ -146,7 +146,7 @@ export default function MonthlyCashflowChart({ data }) {
 
   return (
     <div className="space-y-3">
-      <div className="h-[280px] w-full">
+      <div className="h-[220px] w-full sm:h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartData}

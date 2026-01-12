@@ -101,8 +101,12 @@ export default function CategoryBreakdownChart({ data }) {
   return (
     <div className="space-y-4">
       <div className="grid items-center gap-6 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]">
-        <div className="w-full min-w-[220px]" role="img" aria-label="Expense breakdown">
-          <ResponsiveContainer width="100%" height={240}>
+        <div
+          className="h-[200px] w-full min-w-[220px] sm:h-[240px]"
+          role="img"
+          aria-label="Expense breakdown"
+        >
+          <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
                 data={chartData}

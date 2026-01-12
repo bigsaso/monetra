@@ -243,7 +243,7 @@ export default function InvestmentsClient() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10">
+    <div className="mx-auto w-full max-w-full px-4 py-10 sm:max-w-3xl">
       <Button asChild variant="outline">
         <Link href="/">← Back to dashboard</Link>
       </Button>
@@ -311,7 +311,7 @@ export default function InvestmentsClient() {
             <CardTitle>Your investments</CardTitle>
             <CardDescription>Review and update tracked assets.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="overflow-x-auto md:overflow-visible">
             {loading ? <p>Loading investments...</p> : null}
             {error ? <p className="text-sm text-rose-600">{error}</p> : null}
             {!loading && investments.length === 0 ? (
@@ -362,7 +362,7 @@ export default function InvestmentsClient() {
             <CardTitle>Investment activity</CardTitle>
             <CardDescription>Review buy and sell activity tied to transactions.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="overflow-x-auto md:overflow-visible">
             {activityLoading ? <p>Loading activity...</p> : null}
             {activityError ? (
               <p className="text-sm text-rose-600">{activityError}</p>

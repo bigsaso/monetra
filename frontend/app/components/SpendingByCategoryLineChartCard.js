@@ -375,7 +375,7 @@ export default function SpendingByCategoryLineChartCard({ className = "" }) {
             </div>
           </div>
 
-          <div className="flex min-h-[260px] flex-1 items-center">
+          <div className="flex min-h-[220px] flex-1 items-center sm:min-h-[260px]">
             {isLoading ? <p>Loading spending data...</p> : null}
             {error ? <p className="text-rose-600">{error}</p> : null}
             {showEmptySelection ? (
@@ -388,7 +388,7 @@ export default function SpendingByCategoryLineChartCard({ className = "" }) {
             ) : null}
 
             {!isLoading && !error && series.length > 0 ? (
-              <div className="h-[320px] w-full">
+              <div className="h-[240px] w-full sm:h-[320px]">
                 <div className="mb-3 flex flex-wrap gap-3 text-xs text-slate-600">
                   {selectedCategoryList.map((name) => (
                     <span key={name} className="flex items-center gap-2">

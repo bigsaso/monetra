@@ -454,7 +454,7 @@ export default function ExpenseLineChart({
             </div>
           </div>
 
-          <div className="flex min-h-[260px] flex-1 items-center">
+          <div className="flex min-h-[220px] flex-1 items-center sm:min-h-[260px]">
             {listLoading || chartLoading ? (
               <p>Loading transactions...</p>
             ) : null}
@@ -464,7 +464,7 @@ export default function ExpenseLineChart({
             ) : null}
 
             {!listLoading && !chartLoading && !error && series.length > 0 ? (
-              <div className="h-[320px] w-full">
+              <div className="h-[240px] w-full sm:h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={series}

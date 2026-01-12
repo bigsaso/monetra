@@ -155,7 +155,7 @@ export default function AccountsClient() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10">
+    <div className="mx-auto w-full max-w-full px-4 py-10 sm:max-w-3xl">
       <Button asChild variant="outline">
         <Link href="/">← Back to dashboard</Link>
       </Button>
@@ -226,7 +226,7 @@ export default function AccountsClient() {
             <CardTitle>Your accounts</CardTitle>
             <CardDescription>Review and edit existing account records.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="overflow-x-auto md:overflow-visible">
             {loading ? <p>Loading accounts...</p> : null}
             {error ? <p className="text-sm text-rose-600">{error}</p> : null}
             {!loading && accounts.length === 0 ? (
