@@ -211,9 +211,9 @@ export default function DashboardClient() {
 
   return (
     <div className="min-h-screen px-5 py-12 pb-20 sm:px-8 lg:px-16">
-      <main className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <main className="grid grid-cols-1 gap-6 md:grid-cols-12">
         <MonthlyExpenseSummaryCard
-          className="lg:col-span-12"
+          className="md:col-span-12"
           month={expenseSummaryMonth}
           monthLabel={formatMonthLabel(expenseSummaryMonth)}
           netFlow={expenseSummaryNetFlow}
@@ -229,9 +229,9 @@ export default function DashboardClient() {
           categoryBreakdownError={expenseSummaryBreakdownError}
         />
 
-        <SpendingByCategoryLineChartCard className="lg:col-span-6" />
+        <SpendingByCategoryLineChartCard className="md:col-span-6" />
 
-        <Card className="lg:col-span-6">
+        <Card className="md:col-span-6">
           <CardHeader>
             <CardTitle>Monthly cashflow</CardTitle>
             <CardDescription>Income, expenses, and net cashflow.</CardDescription>
@@ -245,7 +245,7 @@ export default function DashboardClient() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-6">
+        <Card className="md:col-span-6">
           <CardHeader>
             <CardTitle>Budget overview</CardTitle>
             <CardDescription>
@@ -308,7 +308,7 @@ export default function DashboardClient() {
             )}
           </CardContent>
         </Card>
-        <ExpenseLineChart className="lg:col-span-6" />
+        <ExpenseLineChart className="md:col-span-6" />
       </main>
     </div>
   );

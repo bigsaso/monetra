@@ -26,7 +26,7 @@ export default function Sidebar({ isOpen = false, onClose }) {
     <aside
       className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200/80 bg-white/90 px-4 py-6 backdrop-blur transition-transform duration-200 ease-out md:translate-x-0 ${
         isOpen ? "translate-x-0" : "-translate-x-full"
-      } relative`}
+      }`}
     >
       <button
         type="button"
