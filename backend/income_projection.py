@@ -25,6 +25,7 @@ class ProjectedIncome:
     amount: Decimal
     account_id: int
     source: str = "projected"
+    notes: str | None = None
 
 
 def project_income(
@@ -39,6 +40,7 @@ def project_income(
         account_id=schedule.account_id,
         frequency=schedule.frequency,
         kind="income",
+        notes=schedule.notes,
     )
     actual_transactions = [
         ActualTransaction(
@@ -60,6 +62,7 @@ def project_income(
             amount=projection.amount,
             account_id=projection.account_id,
             source=projection.source,
+            notes=projection.notes,
         )
         for projection in projections
     ]

@@ -8,7 +8,7 @@ from typing import Iterable, List, Dict, Set
 
 WEEKLY_DAYS = 7
 BIWEEKLY_DAYS = 14
-SUPPORTED_FREQUENCIES = {"weekly", "biweekly", "monthly"}
+SUPPORTED_FREQUENCIES = {"weekly", "biweekly", "monthly", "yearly"}
 SUPPORTED_KINDS = {"income", "expense", "investment"}
 
 KIND_TO_PROJECTION = {
@@ -31,6 +31,7 @@ class RecurringSchedule:
     frequency: str = "biweekly"
     kind: str = "income"
     category_id: int | None = None
+    notes: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class ProjectedEntry:
     transaction_type: str
     is_investment: bool = False
     source: str = "projected"
+    notes: str | None = None
 
 
 def project_recurring_schedule(
@@ -103,10 +105,17 @@ def _project_schedule(
     normalized_kind = _validate_kind(schedule.kind)
 
     excluded_dates = _excluded_dates_for_schedule(schedule, normalized_kind, existing_index)
-    if normalized_frequency == "monthly":
-        first_date, month_offset = _first_monthly_on_or_after(
-            schedule.start_date, range_start
-        )
+    if normalized_frequency in {"monthly", "yearly"}:
+        if normalized_frequency == "monthly":
+            first_date, month_offset = _first_monthly_on_or_after(
+                schedule.start_date, range_start
+            )
+            month_increment = 1
+        else:
+            first_date, month_offset = _first_yearly_on_or_after(
+                schedule.start_date, range_start
+            )
+            month_increment = 12
     else:
         interval = WEEKLY_DAYS if normalized_frequency == "weekly" else BIWEEKLY_DAYS
         first_date = _first_occurrence_on_or_after(
@@ -125,10 +134,11 @@ def _project_schedule(
                     account_id=schedule.account_id,
                     transaction_type=transaction_type,
                     is_investment=is_investment,
+                    notes=schedule.notes,
                 )
             )
-        if normalized_frequency == "monthly":
-            month_offset += 1
+        if normalized_frequency in {"monthly", "yearly"}:
+            month_offset += month_increment
             current_date = _add_months(
                 schedule.start_date, month_offset, schedule.start_date.day
             )
@@ -143,7 +153,7 @@ def _validate_frequency(frequency: str) -> str:
     if normalized == "byweekly":
         normalized = "biweekly"
     if normalized not in SUPPORTED_FREQUENCIES:
-        raise ValueError("Only weekly, biweekly, or monthly schedules are supported.")
+        raise ValueError("Only weekly, biweekly, monthly, or yearly schedules are supported.")
     return normalized
 
 
@@ -193,6 +203,18 @@ def _first_monthly_on_or_after(start_date: date, minimum_date: date) -> tuple[da
     candidate = _add_months(start_date, months_between, start_date.day)
     if candidate < minimum_date:
         months_between += 1
+        candidate = _add_months(start_date, months_between, start_date.day)
+    return candidate, months_between
+
+
+def _first_yearly_on_or_after(start_date: date, minimum_date: date) -> tuple[date, int]:
+    if start_date >= minimum_date:
+        return start_date, 0
+    years_between = minimum_date.year - start_date.year
+    months_between = years_between * 12
+    candidate = _add_months(start_date, months_between, start_date.day)
+    if candidate < minimum_date:
+        months_between += 12
         candidate = _add_months(start_date, months_between, start_date.day)
     return candidate, months_between
 

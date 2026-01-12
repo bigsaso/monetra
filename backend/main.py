@@ -129,6 +129,7 @@ pay_schedules = Table(
     Column("start_date", Date, nullable=False),
     Column("account_id", Integer, ForeignKey("accounts.id"), nullable=False),
     Column("category_id", Integer, ForeignKey("categories.id")),
+    Column("notes", String(500)),
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
 )
 
@@ -151,7 +152,7 @@ investment_entries = Table(
     Column("investment_id", Integer, ForeignKey("investments.id"), nullable=False),
     Column("transaction_id", Integer, ForeignKey("transactions.id"), nullable=False),
     Column("quantity", Numeric(18, 8), nullable=False),
-    Column("price", Numeric(12, 2), nullable=False),
+    Column("price", Numeric(12, 5), nullable=False),
     Column("type", String(10), nullable=False),
     Column("date", Date, nullable=False),
 )
@@ -382,6 +383,7 @@ class IncomeProjectionEntry(BaseModel):
     amount: Decimal
     account_id: int
     source: str
+    notes: str | None = None
 
 
 class RecurringProjectionEntry(BaseModel):
@@ -390,6 +392,7 @@ class RecurringProjectionEntry(BaseModel):
     kind: str
     schedule_id: int
     source: str
+    notes: str | None = None
 
 
 def _normalize_frequency(value: str) -> str:
@@ -406,6 +409,7 @@ class RecurringSchedulePayload(BaseModel):
     frequency: str | None = "biweekly"
     kind: str = "income"
     category_id: int | None = None
+    notes: str | None = None
 
     @classmethod
     def validate_payload(
@@ -414,10 +418,11 @@ class RecurringSchedulePayload(BaseModel):
         if payload.amount <= 0:
             raise ValueError("Recurring schedule amount must be greater than zero.")
         normalized = _normalize_frequency(payload.frequency or "biweekly")
-        if normalized not in {"weekly", "biweekly", "monthly"}:
-            raise ValueError("Only weekly, biweekly, or monthly schedules are supported.")
+        if normalized not in {"weekly", "biweekly", "monthly", "yearly"}:
+            raise ValueError("Only weekly, biweekly, monthly, or yearly schedules are supported.")
         payload.frequency = normalized
         payload.kind = RecurringScheduleKind.validate(payload.kind or "income")
+        payload.notes = payload.notes.strip() if payload.notes else None
         return payload
 
 
@@ -430,6 +435,7 @@ class RecurringScheduleResponse(BaseModel):
     frequency: str
     kind: str
     category_id: int | None = None
+    notes: str | None = None
     created_at: datetime | None = None
 
 
@@ -1203,6 +1209,7 @@ def list_recurring_schedules(
             frequency=row["frequency"],
             kind=row["kind"],
             category_id=row["category_id"],
+            notes=row["notes"],
             created_at=row["created_at"],
         )
         for row in rows
@@ -1245,6 +1252,7 @@ def create_recurring_schedule(
                 account_id=payload.account_id,
                 frequency=payload.frequency,
                 category_id=payload.category_id,
+                notes=payload.notes,
             )
             .returning(
                 pay_schedules.c.id,
@@ -1255,6 +1263,7 @@ def create_recurring_schedule(
                 pay_schedules.c.account_id,
                 pay_schedules.c.frequency,
                 pay_schedules.c.category_id,
+                pay_schedules.c.notes,
                 pay_schedules.c.created_at,
             )
         )
@@ -1271,6 +1280,7 @@ def create_recurring_schedule(
         frequency=row["frequency"],
         kind=row["kind"],
         category_id=row["category_id"],
+        notes=row["notes"],
         created_at=row["created_at"],
     )
 
@@ -1312,6 +1322,7 @@ def update_recurring_schedule(
                 frequency=payload.frequency,
                 kind=payload.kind,
                 category_id=payload.category_id,
+                notes=payload.notes,
             )
             .returning(
                 pay_schedules.c.id,
@@ -1322,6 +1333,7 @@ def update_recurring_schedule(
                 pay_schedules.c.account_id,
                 pay_schedules.c.frequency,
                 pay_schedules.c.category_id,
+                pay_schedules.c.notes,
                 pay_schedules.c.created_at,
             )
         )
@@ -1338,6 +1350,7 @@ def update_recurring_schedule(
         frequency=row["frequency"],
         kind=row["kind"],
         category_id=row["category_id"],
+        notes=row["notes"],
         created_at=row["created_at"],
     )
 
@@ -1745,6 +1758,7 @@ def income_projections(
                 transactions.c.date,
                 transactions.c.amount,
                 transactions.c.account_id,
+                transactions.c.notes,
             ).where(
                 transactions.c.user_id == user_id,
                 transactions.c.type == "income",
@@ -1758,6 +1772,7 @@ def income_projections(
                 pay_schedules.c.start_date,
                 pay_schedules.c.account_id,
                 pay_schedules.c.frequency,
+                pay_schedules.c.notes,
             ).where(
                 pay_schedules.c.user_id == user_id,
                 pay_schedules.c.kind == "income",
@@ -1770,6 +1785,7 @@ def income_projections(
             amount=row["amount"],
             account_id=row["account_id"],
             source="actual",
+            notes=row["notes"],
         )
         for row in income_rows
     ]
@@ -1791,6 +1807,7 @@ def income_projections(
             start_date=row["start_date"],
             account_id=row["account_id"],
             frequency=row["frequency"],
+            notes=row["notes"],
         )
         existing_income = income_by_account.get(row["account_id"], [])
         try:
@@ -1803,6 +1820,7 @@ def income_projections(
                 amount=projection.amount,
                 account_id=projection.account_id,
                 source="projected",
+                notes=projection.notes,
             )
             for projection in projections
         )
@@ -1843,6 +1861,7 @@ def recurring_projections(
                 pay_schedules.c.account_id,
                 pay_schedules.c.frequency,
                 pay_schedules.c.kind,
+                pay_schedules.c.notes,
             ).where(pay_schedules.c.user_id == user_id)
         ).mappings().all()
 
@@ -1863,6 +1882,7 @@ def recurring_projections(
             account_id=row["account_id"],
             frequency=row["frequency"],
             kind=row["kind"],
+            notes=row["notes"],
         )
         try:
             schedule_projections = project_recurring_schedule(
@@ -1877,6 +1897,7 @@ def recurring_projections(
                 kind=row["kind"],
                 schedule_id=row["id"],
                 source=projection.source,
+                notes=projection.notes,
             )
             for projection in schedule_projections
         )

@@ -93,6 +93,78 @@ class RecurringProjectionTests(unittest.TestCase):
         ]
         self.assertEqual(projections, expected)
 
+    def test_projects_yearly_schedule_with_day_clamp(self) -> None:
+        schedule = RecurringSchedule(
+            amount=Decimal("75"),
+            start_date=date(2024, 2, 29),
+            account_id=4,
+            frequency="yearly",
+            kind="expense",
+        )
+
+        projections = project_recurring_schedule(
+            schedule,
+            range_start=date(2024, 1, 1),
+            range_end=date(2026, 3, 1),
+            existing_transactions=[],
+        )
+
+        expected = [
+            ProjectedEntry(
+                date=date(2024, 2, 29),
+                amount=Decimal("75"),
+                account_id=4,
+                transaction_type="expense",
+                is_investment=False,
+            ),
+            ProjectedEntry(
+                date=date(2025, 2, 28),
+                amount=Decimal("75"),
+                account_id=4,
+                transaction_type="expense",
+                is_investment=False,
+            ),
+            ProjectedEntry(
+                date=date(2026, 2, 28),
+                amount=Decimal("75"),
+                account_id=4,
+                transaction_type="expense",
+                is_investment=False,
+            ),
+        ]
+        self.assertEqual(projections, expected)
+
+    def test_projects_notes_on_schedule(self) -> None:
+        schedule = RecurringSchedule(
+            amount=Decimal("45"),
+            start_date=date(2024, 5, 1),
+            account_id=7,
+            frequency="monthly",
+            kind="expense",
+            notes="Gym membership",
+        )
+
+        projections = project_recurring_schedule(
+            schedule,
+            range_start=date(2024, 5, 1),
+            range_end=date(2024, 5, 31),
+            existing_transactions=[],
+        )
+
+        self.assertEqual(
+            projections,
+            [
+                ProjectedEntry(
+                    date=date(2024, 5, 1),
+                    amount=Decimal("45"),
+                    account_id=7,
+                    transaction_type="expense",
+                    is_investment=False,
+                    notes="Gym membership",
+                )
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,7 +28,8 @@ const emptyForm = {
   account_id: "",
   frequency: "biweekly",
   kind: "income",
-  category_id: ""
+  category_id: "",
+  notes: ""
 };
 
 const isValidIsoDate = (value) =>
@@ -241,7 +242,8 @@ export default function RecurringSchedulesClient() {
         account_id: Number(form.account_id),
         frequency: form.frequency,
         kind: form.kind,
-        category_id: categoryId
+        category_id: categoryId,
+        notes: form.notes || null
       };
       const response = await fetch("/api/recurring-schedules", {
         method: "POST",
@@ -252,7 +254,7 @@ export default function RecurringSchedulesClient() {
         const data = await response.json();
         throw new Error(data?.detail || "Failed to save recurring schedule.");
       }
-      setForm((prev) => ({ ...prev, amount: "", start_date: "" }));
+      setForm((prev) => ({ ...prev, amount: "", start_date: "", notes: "" }));
       await loadSchedules();
     } catch (err) {
       setError(err.message);
@@ -270,7 +272,8 @@ export default function RecurringSchedulesClient() {
       account_id: String(schedule.account_id),
       frequency: schedule.frequency || "biweekly",
       kind: scheduleKindLookup[schedule.kind] ? schedule.kind : "income",
-      category_id: schedule.category_id ? String(schedule.category_id) : ""
+      category_id: schedule.category_id ? String(schedule.category_id) : "",
+      notes: schedule.notes || ""
     });
     setIsEditOpen(true);
   };
@@ -313,7 +316,8 @@ export default function RecurringSchedulesClient() {
         account_id: Number(editForm.account_id),
         frequency: editForm.frequency,
         kind: editForm.kind,
-        category_id: categoryId
+        category_id: categoryId,
+        notes: editForm.notes || null
       };
       const response = await fetch(`/api/recurring-schedules/${editingId}`, {
         method: "PUT",
@@ -467,6 +471,16 @@ export default function RecurringSchedulesClient() {
                 </select>
               </label>
               <label className="text-sm text-slate-600">
+                Notes (optional)
+                <textarea
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="notes"
+                  rows={3}
+                  value={form.notes}
+                  onChange={handleChange}
+                />
+              </label>
+              <label className="text-sm text-slate-600">
                 {selectedKind.cadenceLabel}
                 <select
                   className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
@@ -477,6 +491,7 @@ export default function RecurringSchedulesClient() {
                   <option value="weekly">Weekly</option>
                   <option value="biweekly">Biweekly</option>
                   <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
                 </select>
               </label>
               <div className="flex flex-wrap gap-2">
@@ -526,6 +541,7 @@ export default function RecurringSchedulesClient() {
                               <TableHead>Start date</TableHead>
                               <TableHead>Account</TableHead>
                               <TableHead>Category</TableHead>
+                              <TableHead>Notes</TableHead>
                               <TableHead>Frequency</TableHead>
                               <TableHead>Actions</TableHead>
                             </TableRow>
@@ -543,6 +559,7 @@ export default function RecurringSchedulesClient() {
                                     ? categoryLookup[schedule.category_id] || "-"
                                     : "-"}
                                 </TableCell>
+                                <TableCell>{schedule.notes || "-"}</TableCell>
                                 <TableCell className="capitalize">
                                   {schedule.frequency}
                                 </TableCell>
@@ -674,6 +691,16 @@ export default function RecurringSchedulesClient() {
               </select>
             </label>
             <label className="text-sm text-slate-600">
+              Notes (optional)
+              <textarea
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="notes"
+                rows={3}
+                value={editForm.notes}
+                onChange={handleEditChange}
+              />
+            </label>
+            <label className="text-sm text-slate-600">
               {selectedEditKind.cadenceLabel}
               <select
                 className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
@@ -684,6 +711,7 @@ export default function RecurringSchedulesClient() {
                 <option value="weekly">Weekly</option>
                 <option value="biweekly">Biweekly</option>
                 <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
               </select>
             </label>
             {error ? <p className="text-sm text-rose-600">{error}</p> : null}

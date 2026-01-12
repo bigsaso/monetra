@@ -1166,7 +1166,7 @@ export default function TransactionsClient() {
                     className={inputClass}
                     name="price"
                     type="number"
-                    step="0.01"
+                    step="0.00001"
                     min="0"
                     value={form.price}
                     onChange={handleChange}
@@ -1625,7 +1625,7 @@ export default function TransactionsClient() {
                     className={inputClass}
                     name="price"
                     type="number"
-                    step="0.01"
+                    step="0.00001"
                     min="0"
                     value={editForm.price}
                     onChange={handleEditChange}

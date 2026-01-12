@@ -1,0 +1,2 @@
+ALTER TABLE pay_schedules
+ADD COLUMN notes VARCHAR(500);
