@@ -52,6 +52,23 @@ if database_url.startswith("sqlite"):
 engine = create_engine(database_url, connect_args=connect_args)
 metadata = MetaData()
 
+def normalize_currency(value: str) -> str:
+    normalized = value.strip().upper()
+    if len(normalized) != 3 or not normalized.isalpha():
+        raise ValueError("Currency must be a 3-letter ISO 4217 code.")
+    return normalized
+
+
+def get_system_default_currency() -> str:
+    raw = os.getenv("DEFAULT_CURRENCY", "USD")
+    try:
+        return normalize_currency(raw)
+    except ValueError:
+        return "USD"
+
+
+SYSTEM_DEFAULT_CURRENCY = get_system_default_currency()
+
 DEFAULT_CATEGORIES = [
     "Groceries",
     "Rent",
@@ -68,6 +85,7 @@ users = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("email", String(255), unique=True, nullable=False),
     Column("hashed_password", String(255), nullable=False),
+    Column("home_currency", String(3)),
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
 )
 
@@ -100,6 +118,7 @@ transactions = Table(
     Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
     Column("account_id", Integer, ForeignKey("accounts.id"), nullable=False),
     Column("amount", Numeric(12, 2), nullable=False),
+    Column("currency", String(3), nullable=False, server_default=SYSTEM_DEFAULT_CURRENCY),
     Column("type", String(20), nullable=False),
     Column("category", String(255)),
     Column("date", Date, nullable=False),
@@ -124,6 +143,7 @@ pay_schedules = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
     Column("amount", Numeric(12, 2), nullable=False),
+    Column("currency", String(3), nullable=False, server_default=SYSTEM_DEFAULT_CURRENCY),
     Column("kind", String(20), nullable=False, server_default="income"),
     Column("frequency", String(50), nullable=False),
     Column("start_date", Date, nullable=False),
@@ -258,6 +278,7 @@ class AccountPayload(BaseModel):
 class TransactionPayload(BaseModel):
     account_id: int
     amount: Decimal
+    currency: str | None = None
     type: str
     category: str | None = None
     date: date
@@ -272,6 +293,7 @@ class TransactionPayload(BaseModel):
         payload.type = TransactionType.validate(payload.type)
         if payload.category is not None:
             payload.category = payload.category.strip()
+        payload.currency = payload.currency.strip() if payload.currency else None
         payload.notes = payload.notes.strip() if payload.notes else None
         if payload.amount <= 0:
             raise ValueError("Amount must be greater than zero.")
@@ -281,6 +303,7 @@ class TransactionPayload(BaseModel):
 class TransactionResponse(TransactionPayload):
     id: int
     user_id: int
+    currency: str
 
 
 class BudgetRulePayload(BaseModel):
@@ -404,6 +427,7 @@ def _normalize_frequency(value: str) -> str:
 
 class RecurringSchedulePayload(BaseModel):
     amount: Decimal
+    currency: str | None = None
     start_date: date
     account_id: int
     frequency: str | None = "biweekly"
@@ -417,6 +441,7 @@ class RecurringSchedulePayload(BaseModel):
     ) -> "RecurringSchedulePayload":
         if payload.amount <= 0:
             raise ValueError("Recurring schedule amount must be greater than zero.")
+        payload.currency = payload.currency.strip() if payload.currency else None
         normalized = _normalize_frequency(payload.frequency or "biweekly")
         if normalized not in {"weekly", "biweekly", "monthly", "yearly"}:
             raise ValueError("Only weekly, biweekly, monthly, or yearly schedules are supported.")
@@ -430,6 +455,7 @@ class RecurringScheduleResponse(BaseModel):
     id: int
     user_id: int
     amount: Decimal
+    currency: str
     start_date: date
     account_id: int
     frequency: str
@@ -542,6 +568,24 @@ def get_user_id(x_user_id: str | None = Header(None)) -> int:
         if not result.first():
             raise HTTPException(status_code=404, detail="User not found.")
     return user_id
+
+
+def resolve_default_currency(conn, user_id: int) -> str:
+    home_currency = conn.execute(
+        select(users.c.home_currency).where(users.c.id == user_id)
+    ).scalar_one_or_none()
+    if home_currency:
+        try:
+            return normalize_currency(home_currency)
+        except ValueError:
+            pass
+    return SYSTEM_DEFAULT_CURRENCY
+
+
+def resolve_currency(value: str | None, conn, user_id: int) -> str:
+    if value:
+        return normalize_currency(value)
+    return resolve_default_currency(conn, user_id)
 
 
 def ensure_default_categories(conn, user_id: int) -> None:
@@ -1204,6 +1248,7 @@ def list_recurring_schedules(
             id=row["id"],
             user_id=row["user_id"],
             amount=row["amount"],
+            currency=row["currency"],
             start_date=row["start_date"],
             account_id=row["account_id"],
             frequency=row["frequency"],
@@ -1242,11 +1287,16 @@ def create_recurring_schedule(
             ).first()
             if not category_exists:
                 raise HTTPException(status_code=404, detail="Category not found.")
+        try:
+            resolved_currency = resolve_currency(payload.currency, conn, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         stmt = (
             insert(pay_schedules)
             .values(
                 user_id=user_id,
                 amount=payload.amount,
+                currency=resolved_currency,
                 kind=payload.kind,
                 start_date=payload.start_date,
                 account_id=payload.account_id,
@@ -1258,6 +1308,7 @@ def create_recurring_schedule(
                 pay_schedules.c.id,
                 pay_schedules.c.user_id,
                 pay_schedules.c.amount,
+                pay_schedules.c.currency,
                 pay_schedules.c.kind,
                 pay_schedules.c.start_date,
                 pay_schedules.c.account_id,
@@ -1275,6 +1326,7 @@ def create_recurring_schedule(
         id=row["id"],
         user_id=row["user_id"],
         amount=row["amount"],
+        currency=row["currency"],
         start_date=row["start_date"],
         account_id=row["account_id"],
         frequency=row["frequency"],
@@ -1312,11 +1364,32 @@ def update_recurring_schedule(
             ).first()
             if not category_exists:
                 raise HTTPException(status_code=404, detail="Category not found.")
+        existing_currency = None
+        if payload.currency is None:
+            existing_currency = conn.execute(
+                select(pay_schedules.c.currency).where(
+                    pay_schedules.c.id == schedule_id,
+                    pay_schedules.c.user_id == user_id,
+                )
+            ).scalar_one_or_none()
+        try:
+            if payload.currency:
+                resolved_currency = normalize_currency(payload.currency)
+            elif existing_currency:
+                try:
+                    resolved_currency = normalize_currency(existing_currency)
+                except ValueError:
+                    resolved_currency = resolve_default_currency(conn, user_id)
+            else:
+                resolved_currency = resolve_default_currency(conn, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         stmt = (
             update(pay_schedules)
             .where(pay_schedules.c.id == schedule_id, pay_schedules.c.user_id == user_id)
             .values(
                 amount=payload.amount,
+                currency=resolved_currency,
                 start_date=payload.start_date,
                 account_id=payload.account_id,
                 frequency=payload.frequency,
@@ -1328,6 +1401,7 @@ def update_recurring_schedule(
                 pay_schedules.c.id,
                 pay_schedules.c.user_id,
                 pay_schedules.c.amount,
+                pay_schedules.c.currency,
                 pay_schedules.c.kind,
                 pay_schedules.c.start_date,
                 pay_schedules.c.account_id,
@@ -1345,6 +1419,7 @@ def update_recurring_schedule(
         id=row["id"],
         user_id=row["user_id"],
         amount=row["amount"],
+        currency=row["currency"],
         start_date=row["start_date"],
         account_id=row["account_id"],
         frequency=row["frequency"],
@@ -1404,6 +1479,7 @@ def list_transactions(
             user_id=row["user_id"],
             account_id=row["account_id"],
             amount=row["amount"],
+            currency=row["currency"],
             type=row["type"],
             category=row["category"],
             date=row["date"],
@@ -1518,6 +1594,9 @@ def commit_transaction_import(
         )
 
     with engine.begin() as conn:
+        default_currency = resolve_default_currency(conn, user_id)
+        for row in insert_rows:
+            row["currency"] = default_currency
         account_rows = conn.execute(
             select(accounts.c.id).where(
                 accounts.c.user_id == user_id,
@@ -1549,6 +1628,10 @@ def create_transaction(
         if not account_exists:
             raise HTTPException(status_code=404, detail="Account not found.")
         category_group = get_category_group(conn, user_id, payload.category)
+        try:
+            resolved_currency = resolve_currency(payload.currency, conn, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         investment_entry = None
         if category_group == "investments":
             try:
@@ -1571,6 +1654,7 @@ def create_transaction(
                 user_id=user_id,
                 account_id=payload.account_id,
                 amount=payload.amount,
+                currency=resolved_currency,
                 type=payload.type,
                 category=payload.category,
                 date=payload.date,
@@ -1581,6 +1665,7 @@ def create_transaction(
                 transactions.c.user_id,
                 transactions.c.account_id,
                 transactions.c.amount,
+                transactions.c.currency,
                 transactions.c.type,
                 transactions.c.category,
                 transactions.c.date,
@@ -1609,6 +1694,7 @@ def create_transaction(
         user_id=row["user_id"],
         account_id=row["account_id"],
         amount=row["amount"],
+        currency=row["currency"],
         type=row["type"],
         category=row["category"],
         date=row["date"],
@@ -1639,6 +1725,26 @@ def update_transaction(
         if not account_exists:
             raise HTTPException(status_code=404, detail="Account not found.")
         category_group = get_category_group(conn, user_id, payload.category)
+        existing_currency = None
+        if payload.currency is None:
+            existing_currency = conn.execute(
+                select(transactions.c.currency).where(
+                    transactions.c.id == transaction_id,
+                    transactions.c.user_id == user_id,
+                )
+            ).scalar_one_or_none()
+        try:
+            if payload.currency:
+                resolved_currency = normalize_currency(payload.currency)
+            elif existing_currency:
+                try:
+                    resolved_currency = normalize_currency(existing_currency)
+                except ValueError:
+                    resolved_currency = resolve_default_currency(conn, user_id)
+            else:
+                resolved_currency = resolve_default_currency(conn, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         investment_entry = None
         if category_group == "investments":
             try:
@@ -1661,6 +1767,7 @@ def update_transaction(
             .values(
                 account_id=payload.account_id,
                 amount=payload.amount,
+                currency=resolved_currency,
                 type=payload.type,
                 category=payload.category,
                 date=payload.date,
@@ -1671,6 +1778,7 @@ def update_transaction(
                 transactions.c.user_id,
                 transactions.c.account_id,
                 transactions.c.amount,
+                transactions.c.currency,
                 transactions.c.type,
                 transactions.c.category,
                 transactions.c.date,
@@ -1718,6 +1826,7 @@ def update_transaction(
         user_id=row["user_id"],
         account_id=row["account_id"],
         amount=row["amount"],
+        currency=row["currency"],
         type=row["type"],
         category=row["category"],
         date=row["date"],

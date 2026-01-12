@@ -8,6 +8,7 @@ import CsvImportPreviewModal from "../../components/CsvImportPreviewModal";
 import InvestmentManagerModal from "../../components/InvestmentManagerModal";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
+import { CURRENCY_OPTIONS } from "../../../lib/currencies";
 import {
   Dialog,
   DialogClose,
@@ -29,6 +30,7 @@ import {
 const buildEmptyForm = (dateValue) => ({
   account_id: "",
   amount: "",
+  currency: "",
   type: "expense",
   category: "",
   date: dateValue,
@@ -165,6 +167,21 @@ const formatAmountSign = (type) => {
     return "+";
   }
   return "";
+};
+
+const FALLBACK_CURRENCY = "USD";
+
+const formatCurrency = (value, currency) => {
+  const amount = Number(value || 0);
+  const code = String(currency || FALLBACK_CURRENCY).toUpperCase();
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: code
+    }).format(amount);
+  } catch (err) {
+    return `${code} ${amount.toFixed(2)}`;
+  }
 };
 
 const parseCsvText = (text) => {
@@ -324,14 +341,6 @@ export default function TransactionsClient() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [monthYearFilter, setMonthYearFilter] = useState("");
 
-  const currencyFormatter = useMemo(
-    () =>
-      new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: "USD"
-      }),
-    []
-  );
   const categoryOptions = useMemo(() => {
     const names = new Set(categories.map((category) => category.name));
     transactions.forEach((transaction) => {
@@ -617,6 +626,7 @@ export default function TransactionsClient() {
       const payload = {
         account_id: Number(form.account_id),
         amount: Number(form.amount),
+        currency: form.currency || null,
         type: form.type,
         category: form.category ? form.category.trim() : null,
         date: form.date,
@@ -660,6 +670,7 @@ export default function TransactionsClient() {
     setEditForm({
       account_id: String(transaction.account_id),
       amount: String(transaction.amount),
+      currency: transaction.currency || "",
       type: transaction.type,
       category: transaction.category || "",
       date: transaction.date,
@@ -725,6 +736,7 @@ export default function TransactionsClient() {
       const payload = {
         account_id: Number(editForm.account_id),
         amount: Number(editForm.amount),
+        currency: editForm.currency || null,
         type: editForm.type,
         category: editForm.category ? editForm.category.trim() : null,
         date: editForm.date,
@@ -1071,6 +1083,21 @@ export default function TransactionsClient() {
               />
             </label>
             <label className="text-sm text-slate-600">
+              Currency
+              <select
+                className={inputClass}
+                name="currency"
+                value={form.currency}
+                onChange={handleChange}
+              >
+                {CURRENCY_OPTIONS.map((option) => (
+                  <option key={option.value || "default"} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm text-slate-600">
               Category
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <select
@@ -1400,7 +1427,7 @@ export default function TransactionsClient() {
                   <TableCell>{transaction.category || "-"}</TableCell>
                   <TableCell className="text-right font-medium">
                     {formatAmountSign(transaction.type)}
-                    {currencyFormatter.format(Number(transaction.amount || 0))}
+                    {formatCurrency(transaction.amount, transaction.currency)}
                   </TableCell>
                   <TableCell>{transaction.notes || "-"}</TableCell>
                   <TableCell className="flex flex-wrap gap-2">
@@ -1528,6 +1555,21 @@ export default function TransactionsClient() {
                 onChange={handleEditChange}
                 required
               />
+            </label>
+            <label className="text-sm text-slate-600">
+              Currency
+              <select
+                className={inputClass}
+                name="currency"
+                value={editForm.currency}
+                onChange={handleEditChange}
+              >
+                {CURRENCY_OPTIONS.map((option) => (
+                  <option key={option.value || "default"} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="text-sm text-slate-600">
               Category

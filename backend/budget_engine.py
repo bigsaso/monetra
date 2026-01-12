@@ -13,6 +13,7 @@ class Transaction:
     amount: Decimal
     type: str
     date: date
+    currency: Optional[str] = None
     category: Optional[str] = None
     account_id: Optional[int] = None
 

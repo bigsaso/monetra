@@ -28,6 +28,7 @@ class RecurringSchedule:
     amount: Decimal
     start_date: date
     account_id: int
+    currency: str | None = None
     frequency: str = "biweekly"
     kind: str = "income"
     category_id: int | None = None

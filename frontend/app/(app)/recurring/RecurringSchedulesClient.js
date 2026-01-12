@@ -21,9 +21,11 @@ import {
   TableHeader,
   TableRow
 } from "../../components/ui/table";
+import { CURRENCY_OPTIONS } from "../../../lib/currencies";
 
 const emptyForm = {
   amount: "",
+  currency: "",
   start_date: "",
   account_id: "",
   frequency: "biweekly",
@@ -43,6 +45,21 @@ const formatDate = (value) => {
     day: "numeric",
     year: "numeric"
   });
+};
+
+const FALLBACK_CURRENCY = "USD";
+
+const formatCurrency = (value, currency) => {
+  const amount = Number(value || 0);
+  const code = String(currency || FALLBACK_CURRENCY).toUpperCase();
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: code
+    }).format(amount);
+  } catch (err) {
+    return `${code} ${amount.toFixed(2)}`;
+  }
 };
 
 const scheduleKindOptions = [
@@ -99,15 +116,6 @@ export default function RecurringSchedulesClient() {
   const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  const currencyFormatter = useMemo(
-    () =>
-      new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: "USD"
-      }),
-    []
-  );
 
   const loadSchedules = async () => {
     setLoading(true);
@@ -238,6 +246,7 @@ export default function RecurringSchedulesClient() {
       const categoryId = form.category_id ? Number(form.category_id) : null;
       const payload = {
         amount: Number(form.amount),
+        currency: form.currency || null,
         start_date: form.start_date,
         account_id: Number(form.account_id),
         frequency: form.frequency,
@@ -268,6 +277,7 @@ export default function RecurringSchedulesClient() {
     setError("");
     setEditForm({
       amount: String(schedule.amount),
+      currency: schedule.currency || "",
       start_date: schedule.start_date,
       account_id: String(schedule.account_id),
       frequency: schedule.frequency || "biweekly",
@@ -312,6 +322,7 @@ export default function RecurringSchedulesClient() {
       const categoryId = editForm.category_id ? Number(editForm.category_id) : null;
       const payload = {
         amount: Number(editForm.amount),
+        currency: editForm.currency || null,
         start_date: editForm.start_date,
         account_id: Number(editForm.account_id),
         frequency: editForm.frequency,
@@ -417,6 +428,21 @@ export default function RecurringSchedulesClient() {
                   onChange={handleChange}
                   required
                 />
+              </label>
+              <label className="text-sm text-slate-600">
+                Currency
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="currency"
+                  value={form.currency}
+                  onChange={handleChange}
+                >
+                  {CURRENCY_OPTIONS.map((option) => (
+                    <option key={option.value || "default"} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="text-sm text-slate-600">
                 Start date
@@ -548,10 +574,10 @@ export default function RecurringSchedulesClient() {
                           </TableHeader>
                           <TableBody>
                             {items.map((schedule) => (
-                              <TableRow key={schedule.id}>
-                                <TableCell>
-                                  {currencyFormatter.format(schedule.amount)}
-                                </TableCell>
+                                <TableRow key={schedule.id}>
+                                  <TableCell>
+                                  {formatCurrency(schedule.amount, schedule.currency)}
+                                  </TableCell>
                                 <TableCell>{formatDate(schedule.start_date)}</TableCell>
                                 <TableCell>{accountLookup[schedule.account_id] || "-"}</TableCell>
                                 <TableCell>
@@ -637,6 +663,21 @@ export default function RecurringSchedulesClient() {
                 onChange={handleEditChange}
                 required
               />
+            </label>
+            <label className="text-sm text-slate-600">
+              Currency
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="currency"
+                value={editForm.currency}
+                onChange={handleEditChange}
+              >
+                {CURRENCY_OPTIONS.map((option) => (
+                  <option key={option.value || "default"} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="text-sm text-slate-600">
               Start date
