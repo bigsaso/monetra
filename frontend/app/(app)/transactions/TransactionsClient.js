@@ -691,6 +691,12 @@ export default function TransactionsClient() {
         setError("Investment price must be greater than zero.");
         return;
       }
+      if (
+        form.investment_type === "sell" &&
+        !window.confirm("Submit this sell transaction?")
+      ) {
+        return;
+      }
     }
     setSaving(true);
     setError("");
@@ -1309,7 +1315,9 @@ export default function TransactionsClient() {
                   />
                 </label>
                 <label className="text-sm text-slate-600">
-                  Price
+                  {form.investment_type === "sell"
+                    ? "Sell price per share"
+                    : "Price per share"}
                   <input
                     className={inputClass}
                     name="price"
@@ -1840,7 +1848,9 @@ export default function TransactionsClient() {
                   />
                 </label>
                 <label className="text-sm text-slate-600">
-                  Price
+                  {editForm.investment_type === "sell"
+                    ? "Sell price per share"
+                    : "Price per share"}
                   <input
                     className={inputClass}
                     name="price"

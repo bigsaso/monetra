@@ -189,6 +189,7 @@ investment_entries = Table(
     Column("price_per_share", Numeric(12, 5)),
     Column("total_amount", Numeric(12, 2)),
     Column("currency", String(3)),
+    Column("cost_of_sold_shares", Numeric(12, 2)),
     Column("realized_profit_loss", Numeric(12, 2)),
     Column("type", String(10), nullable=False),
     Column("date", Date, nullable=False),
@@ -852,6 +853,7 @@ def recalculate_investment_position(conn, user_id: int, investment_id: int) -> N
         if entry["currency"] is None and entry["transaction_currency"] is not None:
             update_values["currency"] = entry["transaction_currency"]
         if entry_type == "sell":
+            update_values["cost_of_sold_shares"] = cost_basis
             update_values["realized_profit_loss"] = realized_profit_loss
         if update_values:
             update_values["id"] = entry["id"]
