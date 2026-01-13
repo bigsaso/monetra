@@ -43,13 +43,31 @@ const formatAssetType = (value) => {
     .join(" ");
 };
 
+const normalizeCurrencyValue = (value) =>
+  String(value || "").trim().toUpperCase();
+
+const isForeignCurrency = (currency, homeCurrency) => {
+  const normalizedCurrency = normalizeCurrencyValue(currency);
+  const normalizedHome = normalizeCurrencyValue(homeCurrency);
+  if (!normalizedCurrency || !normalizedHome) {
+    return false;
+  }
+  return normalizedCurrency !== normalizedHome;
+};
+
 export default function InvestmentsClient() {
   const [investments, setInvestments] = useState([]);
   const [activity, setActivity] = useState([]);
+  const [homeCurrency, setHomeCurrency] = useState("USD");
+  const [transactionCurrencyLookup, setTransactionCurrencyLookup] = useState({});
   const [form, setForm] = useState(emptyForm);
   const [editForm, setEditForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [convertTarget, setConvertTarget] = useState(null);
+  const [convertDate, setConvertDate] = useState("");
+  const [convertError, setConvertError] = useState("");
+  const [convertSaving, setConvertSaving] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -112,9 +130,51 @@ export default function InvestmentsClient() {
     }
   };
 
+  const loadTransactionCurrencies = async () => {
+    try {
+      const response = await fetch("/api/transactions");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load transactions.");
+      }
+      const data = await response.json();
+      const lookup = {};
+      data.forEach((transaction) => {
+        if (transaction?.id == null) {
+          return;
+        }
+        lookup[transaction.id] = transaction.currency;
+      });
+      setTransactionCurrencyLookup(lookup);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
+    }
+  };
+
+  const loadHomeCurrency = async () => {
+    try {
+      const response = await fetch("/api/user-settings");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load user settings.");
+      }
+      const data = await response.json();
+      const resolved = String(data?.home_currency || "").trim().toUpperCase();
+      if (resolved) {
+        setHomeCurrency(resolved);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     loadInvestments();
     loadActivity();
+    loadTransactionCurrencies();
+    loadHomeCurrency();
   }, []);
 
   const handleChange = (event) => {
@@ -239,6 +299,54 @@ export default function InvestmentsClient() {
       setError(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleConvertOpen = (entry) => {
+    setConvertTarget(entry);
+    setConvertDate(entry?.date || "");
+    setConvertError("");
+  };
+
+  const handleConvertClose = () => {
+    if (convertSaving) {
+      return;
+    }
+    setConvertTarget(null);
+    setConvertDate("");
+    setConvertError("");
+  };
+
+  const handleConvertSubmit = async (event) => {
+    event.preventDefault();
+    if (!convertDate) {
+      setConvertError("Select a conversion date.");
+      return;
+    }
+    if (!convertTarget) {
+      return;
+    }
+    setConvertSaving(true);
+    setConvertError("");
+    try {
+      const response = await fetch("/api/currency/convert-to-home", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          record_id: convertTarget.id,
+          conversion_date: convertDate
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to convert currency.");
+      }
+      await loadActivity();
+      handleConvertClose();
+    } catch (err) {
+      setConvertError(err.message);
+    } finally {
+      setConvertSaving(false);
     }
   };
 
@@ -379,6 +487,7 @@ export default function InvestmentsClient() {
                     <TableHead className="text-right">Price</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Transaction</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -406,6 +515,21 @@ export default function InvestmentsClient() {
                           View transaction #{entry.transaction_id}
                         </Link>
                       </TableCell>
+                      <TableCell className="flex flex-wrap gap-2">
+                        {isForeignCurrency(
+                          transactionCurrencyLookup[entry.transaction_id],
+                          homeCurrency
+                        ) ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => handleConvertOpen(entry)}
+                            disabled={convertSaving}
+                          >
+                            Convert to {homeCurrency}
+                          </Button>
+                        ) : null}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -414,6 +538,53 @@ export default function InvestmentsClient() {
           </CardContent>
         </Card>
       </div>
+      <Dialog
+        open={Boolean(convertTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleConvertClose();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Convert to {homeCurrency}</DialogTitle>
+            <DialogDescription>
+              This updates the linked transaction amount and currency.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleConvertSubmit} className="grid gap-4">
+            <label className="text-sm text-slate-600">
+              Conversion date
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                type="date"
+                value={convertDate}
+                onChange={(event) => setConvertDate(event.target.value)}
+                required
+              />
+            </label>
+            {convertError ? (
+              <p className="text-sm text-rose-600">{convertError}</p>
+            ) : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleConvertClose}
+                  disabled={convertSaving}
+                >
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button type="submit" disabled={convertSaving}>
+                Convert
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={isEditOpen}
         onOpenChange={(open) => {

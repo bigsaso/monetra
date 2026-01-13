@@ -171,6 +171,18 @@ const formatAmountSign = (type) => {
 
 const FALLBACK_CURRENCY = "USD";
 
+const normalizeCurrencyValue = (value) =>
+  String(value || "").trim().toUpperCase();
+
+const isForeignCurrency = (currency, homeCurrency) => {
+  const normalizedCurrency = normalizeCurrencyValue(currency);
+  const normalizedHome = normalizeCurrencyValue(homeCurrency);
+  if (!normalizedCurrency || !normalizedHome) {
+    return false;
+  }
+  return normalizedCurrency !== normalizedHome;
+};
+
 const formatCurrency = (value, currency) => {
   const amount = Number(value || 0);
   const code = String(currency || FALLBACK_CURRENCY).toUpperCase();
@@ -311,10 +323,15 @@ export default function TransactionsClient() {
   const [categories, setCategories] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [investments, setInvestments] = useState([]);
+  const [homeCurrency, setHomeCurrency] = useState("USD");
   const [form, setForm] = useState(buildEmptyForm(today));
   const [editForm, setEditForm] = useState(buildEmptyForm(today));
   const [editingId, setEditingId] = useState(null);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [convertTarget, setConvertTarget] = useState(null);
+  const [convertDate, setConvertDate] = useState("");
+  const [convertError, setConvertError] = useState("");
+  const [convertSaving, setConvertSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [investmentsLoading, setInvestmentsLoading] = useState(true);
@@ -478,6 +495,24 @@ export default function TransactionsClient() {
     }
   };
 
+  const loadHomeCurrency = async () => {
+    try {
+      const response = await fetch("/api/user-settings");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load user settings.");
+      }
+      const data = await response.json();
+      const resolved = String(data?.home_currency || "").trim().toUpperCase();
+      if (resolved) {
+        setHomeCurrency(resolved);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
+    }
+  };
+
   const loadCategories = async () => {
     setCategoriesLoading(true);
     setCategoriesError("");
@@ -522,6 +557,7 @@ export default function TransactionsClient() {
     loadData();
     loadCategories();
     loadInvestments();
+    loadHomeCurrency();
   }, []);
 
   useEffect(() => {
@@ -793,6 +829,54 @@ export default function TransactionsClient() {
       setError(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleConvertOpen = (transaction) => {
+    setConvertTarget(transaction);
+    setConvertDate(transaction?.date || today);
+    setConvertError("");
+  };
+
+  const handleConvertClose = () => {
+    if (convertSaving) {
+      return;
+    }
+    setConvertTarget(null);
+    setConvertDate("");
+    setConvertError("");
+  };
+
+  const handleConvertSubmit = async (event) => {
+    event.preventDefault();
+    if (!convertDate) {
+      setConvertError("Select a conversion date.");
+      return;
+    }
+    if (!convertTarget) {
+      return;
+    }
+    setConvertSaving(true);
+    setConvertError("");
+    try {
+      const response = await fetch("/api/currency/convert-to-home", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          record_id: convertTarget.id,
+          conversion_date: convertDate
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to convert currency.");
+      }
+      await loadData();
+      handleConvertClose();
+    } catch (err) {
+      setConvertError(err.message);
+    } finally {
+      setConvertSaving(false);
     }
   };
 
@@ -1431,6 +1515,16 @@ export default function TransactionsClient() {
                   </TableCell>
                   <TableCell>{transaction.notes || "-"}</TableCell>
                   <TableCell className="flex flex-wrap gap-2">
+                    {isForeignCurrency(transaction.currency, homeCurrency) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleConvertOpen(transaction)}
+                        disabled={saving || convertSaving}
+                        className={ghostButtonClass}
+                      >
+                        Convert to {homeCurrency}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => handleEdit(transaction)}
@@ -1493,6 +1587,53 @@ export default function TransactionsClient() {
           onDelete={deleteInvestment}
         />
       ) : null}
+      <Dialog
+        open={Boolean(convertTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleConvertClose();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Convert to {homeCurrency}</DialogTitle>
+            <DialogDescription>
+              This updates the transaction amount and currency using the historical FX rate.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleConvertSubmit} className="grid gap-4">
+            <label className="text-sm text-slate-600">
+              Conversion date
+              <input
+                className={inputClass}
+                type="date"
+                value={convertDate}
+                onChange={(event) => setConvertDate(event.target.value)}
+                required
+              />
+            </label>
+            {convertError ? (
+              <p className="text-sm text-rose-600">{convertError}</p>
+            ) : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleConvertClose}
+                  disabled={convertSaving}
+                >
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button type="submit" disabled={convertSaving}>
+                Convert
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={isEditOpen}
         onOpenChange={(open) => {

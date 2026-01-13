@@ -12,7 +12,7 @@ import {
   YAxis
 } from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { convertAmount, getConversionNote, getCurrencyFormatter } from "../../lib/currency";
+import { getConversionNote, getCurrencyFormatter } from "../../lib/currency";
 
 const RESOLUTIONS = [
   { value: "daily", label: "Daily" },
@@ -32,73 +32,7 @@ const TIMEFRAMES = [
   { value: "5Y", label: "5Y" }
 ];
 
-const pad = (value) => String(value).padStart(2, "0");
-
 const parseDate = (value) => new Date(`${value}T00:00:00`);
-
-const startOfDay = (date) =>
-  new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-const getTimeframeStart = (endDate, timeframe) => {
-  const start = startOfDay(endDate);
-  if (timeframe === "1W") {
-    start.setDate(start.getDate() - 6);
-    return start;
-  }
-  if (timeframe === "1M") {
-    start.setMonth(start.getMonth() - 1);
-    return start;
-  }
-  if (timeframe === "3M") {
-    start.setMonth(start.getMonth() - 3);
-    return start;
-  }
-  if (timeframe === "6M") {
-    start.setMonth(start.getMonth() - 6);
-    return start;
-  }
-  if (timeframe === "YTD") {
-    return new Date(start.getFullYear(), 0, 1);
-  }
-  if (timeframe === "1Y") {
-    start.setFullYear(start.getFullYear() - 1);
-    return start;
-  }
-  if (timeframe === "2Y") {
-    start.setFullYear(start.getFullYear() - 2);
-    return start;
-  }
-  if (timeframe === "5Y") {
-    start.setFullYear(start.getFullYear() - 5);
-    return start;
-  }
-  return start;
-};
-
-const getBucketStart = (date, resolution) => {
-  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  if (resolution === "weekly") {
-    const day = start.getDay();
-    const diff = (day + 6) % 7;
-    start.setDate(start.getDate() - diff);
-  }
-  if (resolution === "monthly") {
-    start.setDate(1);
-  }
-  if (resolution === "yearly") {
-    start.setMonth(0, 1);
-  }
-  return start;
-};
-
-const formatBucketKey = (date, resolution) => {
-  const year = date.getFullYear();
-  const month = pad(date.getMonth() + 1);
-  const day = pad(date.getDate());
-  if (resolution === "yearly") return `${year}`;
-  if (resolution === "monthly") return `${year}-${month}`;
-  return `${year}-${month}-${day}`;
-};
 
 const formatBucketLabel = (date, resolution) => {
   if (resolution === "yearly") return `${date.getFullYear()}`;
@@ -118,24 +52,6 @@ const formatBucketLabel = (date, resolution) => {
     month: "short",
     day: "numeric"
   });
-};
-
-const addInterval = (date, resolution) => {
-  const next = new Date(date.getTime());
-  if (resolution === "yearly") {
-    next.setFullYear(next.getFullYear() + 1);
-    return next;
-  }
-  if (resolution === "monthly") {
-    next.setMonth(next.getMonth() + 1);
-    return next;
-  }
-  if (resolution === "weekly") {
-    next.setDate(next.getDate() + 7);
-    return next;
-  }
-  next.setDate(next.getDate() + 1);
-  return next;
 };
 
 const getAverageLabel = (resolution) =>
@@ -182,10 +98,10 @@ export default function ExpenseLineChart({
   homeCurrency = "USD"
 }) {
   const [accounts, setAccounts] = useState([]);
-  const [accountTransactions, setAccountTransactions] = useState([]);
   const [listLoading, setListLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reportBuckets, setReportBuckets] = useState([]);
   const [resolution, setResolution] = useState("daily");
   const [timeframe, setTimeframe] = useState("1Y");
   const [selectedAccountId, setSelectedAccountId] = useState(
@@ -267,120 +183,56 @@ export default function ExpenseLineChart({
     ? `Spend trend for ${selectedAccountName}-linked transactions.`
     : "Select an account to view expense trends.";
 
-  const accountIds = useMemo(() => {
-    return new Set(selectedAccountId ? [selectedAccountId] : []);
-  }, [selectedAccountId]);
   const averageLabel = getAverageLabel(resolution);
 
   const { series } = useMemo(() => {
-    if (!accountIds.size) {
+    if (!reportBuckets.length) {
       return { series: [] };
     }
-    const expenseTransactions = accountTransactions.filter(
-      (transaction) =>
-        transaction.type === "expense" &&
-        accountIds.has(normalizeId(transaction.account_id))
+    const amountTotal = reportBuckets.reduce(
+      (sum, bucket) => sum + Number(bucket.total || 0),
+      0
     );
-    if (!expenseTransactions.length) {
-      return { series: [] };
-    }
-
-    let maxDate = null;
-    expenseTransactions.forEach((transaction) => {
-      const date = parseDate(transaction.date);
-      if (!maxDate || date > maxDate) maxDate = date;
-    });
-
-    if (!maxDate) {
-      return { series: [] };
-    }
-
-    const rangeStart = getTimeframeStart(maxDate, timeframe);
-    const filteredTransactions = expenseTransactions.filter((transaction) => {
-      const date = parseDate(transaction.date);
-      return date >= rangeStart;
-    });
-
-    if (!filteredTransactions.length) {
-      return { series: [] };
-    }
-
-    const totals = new Map();
-    let amountTotal = 0;
-
-    filteredTransactions.forEach((transaction) => {
-      const date = parseDate(transaction.date);
-      const bucketStart = getBucketStart(date, resolution);
-      const key = formatBucketKey(bucketStart, resolution);
-      const existing = totals.get(key) || {
-        date: bucketStart,
-        total: 0,
-        sourceCurrencies: new Set()
-      };
-      const convertedAmount = convertAmount(
-        transaction.amount,
-        transaction.currency || homeCurrency,
-        homeCurrency
-      );
-      existing.total += convertedAmount;
-      if (transaction.currency) {
-        existing.sourceCurrencies.add(transaction.currency);
-      }
-      totals.set(key, existing);
-      amountTotal += convertedAmount;
-    });
-
-    let bucketCount = 0;
-    let cursor = getBucketStart(rangeStart, resolution);
-    const end = getBucketStart(maxDate, resolution);
-    while (cursor.getTime() <= end.getTime()) {
-      bucketCount += 1;
-      cursor = addInterval(cursor, resolution);
-    }
-    const averagePerBucket = bucketCount ? amountTotal / bucketCount : 0;
-
-    const seriesData = [];
-    cursor = getBucketStart(rangeStart, resolution);
-    while (cursor.getTime() <= end.getTime()) {
-      const key = formatBucketKey(cursor, resolution);
-      const entry = totals.get(key);
-      seriesData.push({
-        label: formatBucketLabel(cursor, resolution),
-        total: entry ? entry.total : 0,
-        average: averagePerBucket,
-        sourceCurrencies: entry?.sourceCurrencies
-          ? Array.from(entry.sourceCurrencies)
-          : []
-      });
-      cursor = addInterval(cursor, resolution);
-    }
-
+    const averagePerBucket = reportBuckets.length
+      ? amountTotal / reportBuckets.length
+      : 0;
+    const seriesData = reportBuckets.map((bucket) => ({
+      label: formatBucketLabel(parseDate(bucket.bucket_start), resolution),
+      total: Number(bucket.total || 0),
+      average: averagePerBucket,
+      sourceCurrencies: bucket.source_currencies || []
+    }));
     return { series: seriesData };
-  }, [accountIds, homeCurrency, resolution, timeframe, accountTransactions]);
+  }, [reportBuckets, resolution]);
 
   useEffect(() => {
     let isMounted = true;
     if (!selectedAccountId) {
-      setAccountTransactions([]);
+      setReportBuckets([]);
       setChartLoading(false);
       return () => {
         isMounted = false;
       };
     }
-    const loadAccountTransactions = async () => {
+    const loadExpenseTrends = async () => {
       setChartLoading(true);
       setError("");
       try {
+        const searchParams = new URLSearchParams({
+          account_id: selectedAccountId,
+          resolution,
+          timeframe
+        });
         const response = await fetch(
-          `/api/transactions?account_id=${selectedAccountId}`
+          `/api/reports/expense-trends?${searchParams.toString()}`
         );
         if (!response.ok) {
           const data = await response.json();
-          throw new Error(data?.detail || "Failed to load transactions.");
+          throw new Error(data?.detail || "Failed to load expense trends.");
         }
         const data = await response.json();
         if (!isMounted) return;
-        setAccountTransactions(data);
+        setReportBuckets(data?.buckets || []);
       } catch (err) {
         if (!isMounted) return;
         setError(err.message);
@@ -388,11 +240,11 @@ export default function ExpenseLineChart({
         if (isMounted) setChartLoading(false);
       }
     };
-    loadAccountTransactions();
+    loadExpenseTrends();
     return () => {
       isMounted = false;
     };
-  }, [selectedAccountId]);
+  }, [resolution, selectedAccountId, timeframe]);
 
   const pointCount = series.length;
 
@@ -468,7 +320,7 @@ export default function ExpenseLineChart({
 
           <div className="flex min-h-[220px] flex-1 items-center sm:min-h-[260px]">
             {listLoading || chartLoading ? (
-              <p>Loading transactions...</p>
+              <p>Loading expense trends...</p>
             ) : null}
             {error ? <p className="text-rose-600">{error}</p> : null}
             {!listLoading && !chartLoading && !error && series.length === 0 ? (

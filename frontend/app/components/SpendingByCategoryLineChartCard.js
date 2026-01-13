@@ -11,7 +11,7 @@ import {
   YAxis
 } from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { convertAmount, getConversionNote, getCurrencyFormatter } from "../../lib/currency";
+import { getConversionNote, getCurrencyFormatter } from "../../lib/currency";
 
 const RESOLUTIONS = [
   { value: "daily", label: "Daily" },
@@ -40,62 +40,7 @@ const LINE_COLORS = [
   "#7c2d12"
 ];
 
-const pad = (value) => String(value).padStart(2, "0");
-
 const parseDate = (value) => new Date(`${value}T00:00:00`);
-
-const startOfDay = (date) =>
-  new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-const getTimeframeStart = (endDate, timeframe) => {
-  const start = startOfDay(endDate);
-  if (timeframe === "30D") {
-    start.setDate(start.getDate() - 29);
-    return start;
-  }
-  if (timeframe === "3M") {
-    start.setMonth(start.getMonth() - 3);
-    return start;
-  }
-  if (timeframe === "6M") {
-    start.setMonth(start.getMonth() - 6);
-    return start;
-  }
-  if (timeframe === "1Y") {
-    start.setFullYear(start.getFullYear() - 1);
-    return start;
-  }
-  if (timeframe === "2Y") {
-    start.setFullYear(start.getFullYear() - 2);
-    return start;
-  }
-  return start;
-};
-
-const getBucketStart = (date, resolution) => {
-  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  if (resolution === "weekly") {
-    const day = start.getDay();
-    const diff = (day + 6) % 7;
-    start.setDate(start.getDate() - diff);
-  }
-  if (resolution === "monthly") {
-    start.setDate(1);
-  }
-  if (resolution === "yearly") {
-    start.setMonth(0, 1);
-  }
-  return start;
-};
-
-const formatBucketKey = (date, resolution) => {
-  const year = date.getFullYear();
-  const month = pad(date.getMonth() + 1);
-  const day = pad(date.getDate());
-  if (resolution === "yearly") return `${year}`;
-  if (resolution === "monthly") return `${year}-${month}`;
-  return `${year}-${month}-${day}`;
-};
 
 const formatBucketLabel = (date, resolution) => {
   if (resolution === "yearly") return `${date.getFullYear()}`;
@@ -117,24 +62,6 @@ const formatBucketLabel = (date, resolution) => {
   });
 };
 
-const addInterval = (date, resolution) => {
-  const next = new Date(date.getTime());
-  if (resolution === "yearly") {
-    next.setFullYear(next.getFullYear() + 1);
-    return next;
-  }
-  if (resolution === "monthly") {
-    next.setMonth(next.getMonth() + 1);
-    return next;
-  }
-  if (resolution === "weekly") {
-    next.setDate(next.getDate() + 7);
-    return next;
-  }
-  next.setDate(next.getDate() + 1);
-  return next;
-};
-
 const getCategoryColor = (name) => {
   let hash = 0;
   for (let i = 0; i < name.length; i += 1) {
@@ -149,10 +76,10 @@ export default function SpendingByCategoryLineChartCard({
   homeCurrency = "USD"
 }) {
   const [categories, setCategories] = useState([]);
-  const [transactions, setTransactions] = useState([]);
+  const [reportBuckets, setReportBuckets] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
-  const [transactionsLoading, setTransactionsLoading] = useState(true);
+  const [reportLoading, setReportLoading] = useState(true);
   const [error, setError] = useState("");
   const [resolution, setResolution] = useState("weekly");
   const [timeframe, setTimeframe] = useState("3M");
@@ -190,30 +117,33 @@ export default function SpendingByCategoryLineChartCard({
 
   useEffect(() => {
     let isMounted = true;
-    const loadTransactions = async () => {
-      setTransactionsLoading(true);
+    const loadCategoryTrends = async () => {
+      setReportLoading(true);
       setError("");
       try {
-        const response = await fetch("/api/transactions");
+        const searchParams = new URLSearchParams({ resolution, timeframe });
+        const response = await fetch(
+          `/api/reports/category-trends?${searchParams.toString()}`
+        );
         if (!response.ok) {
           const data = await response.json();
-          throw new Error(data?.detail || "Failed to load transactions.");
+          throw new Error(data?.detail || "Failed to load category trends.");
         }
         const data = await response.json();
         if (!isMounted) return;
-        setTransactions(data);
+        setReportBuckets(data?.buckets || []);
       } catch (err) {
         if (!isMounted) return;
         setError(err.message);
       } finally {
-        if (isMounted) setTransactionsLoading(false);
+        if (isMounted) setReportLoading(false);
       }
     };
-    loadTransactions();
+    loadCategoryTrends();
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [resolution, timeframe]);
 
   const categoryOrder = useMemo(() => {
     return new Map(categories.map((category, index) => [category.name, index]));
@@ -229,85 +159,35 @@ export default function SpendingByCategoryLineChartCard({
     });
   };
 
-  const { series, selectedCategoryList } = useMemo(() => {
+  const { series, selectedCategoryList, hasData } = useMemo(() => {
     if (selectedCategories.length === 0) {
-      return { series: [], selectedCategoryList: [] };
+      return { series: [], selectedCategoryList: [], hasData: false };
     }
 
-    const selectedSet = new Set(selectedCategories);
-    const expenseTransactions = transactions.filter(
-      (transaction) =>
-        transaction.type === "expense" && selectedSet.has(transaction.category)
-    );
-
-    if (!expenseTransactions.length) {
-      return { series: [], selectedCategoryList: selectedCategories };
+    if (!reportBuckets.length) {
+      return { series: [], selectedCategoryList: selectedCategories, hasData: false };
     }
 
-    let maxDate = null;
-    expenseTransactions.forEach((transaction) => {
-      const date = parseDate(transaction.date);
-      if (!maxDate || date > maxDate) maxDate = date;
-    });
-
-    if (!maxDate) {
-      return { series: [], selectedCategoryList: selectedCategories };
-    }
-
-    const rangeStart = getTimeframeStart(maxDate, timeframe);
-    const filteredTransactions = expenseTransactions.filter((transaction) => {
-      const date = parseDate(transaction.date);
-      return date >= rangeStart;
-    });
-
-    if (!filteredTransactions.length) {
-      return { series: [], selectedCategoryList: selectedCategories };
-    }
-
-    const totals = new Map();
-    filteredTransactions.forEach((transaction) => {
-      const date = parseDate(transaction.date);
-      const bucketStart = getBucketStart(date, resolution);
-      const key = formatBucketKey(bucketStart, resolution);
-      const existing = totals.get(key) || {
-        date: bucketStart,
-        values: {},
-        sourceCurrencies: new Set()
-      };
-      const name = transaction.category || "Uncategorized";
-      const convertedAmount = convertAmount(
-        transaction.amount,
-        transaction.currency || homeCurrency,
-        homeCurrency
-      );
-      existing.values[name] = (existing.values[name] || 0) + convertedAmount;
-      if (transaction.currency) {
-        existing.sourceCurrencies.add(transaction.currency);
-      }
-      totals.set(key, existing);
-    });
-
-    const seriesData = [];
-    let cursor = getBucketStart(rangeStart, resolution);
-    const end = getBucketStart(maxDate, resolution);
-    while (cursor.getTime() <= end.getTime()) {
-      const key = formatBucketKey(cursor, resolution);
-      const entry = totals.get(key);
+    let dataHasValue = false;
+    const seriesData = reportBuckets.map((bucket) => {
       const row = {
-        label: formatBucketLabel(cursor, resolution),
-        sourceCurrencies: entry?.sourceCurrencies
-          ? Array.from(entry.sourceCurrencies)
-          : []
+        label: formatBucketLabel(parseDate(bucket.bucket_start), resolution),
+        sourceCurrencies: bucket.source_currencies || []
       };
       selectedCategories.forEach((category) => {
-        row[category] = entry?.values?.[category] || 0;
+        const value = Number(bucket.totals_by_category?.[category] || 0);
+        if (value > 0) dataHasValue = true;
+        row[category] = value;
       });
-      seriesData.push(row);
-      cursor = addInterval(cursor, resolution);
-    }
+      return row;
+    });
 
-    return { series: seriesData, selectedCategoryList: selectedCategories };
-  }, [homeCurrency, resolution, selectedCategories, timeframe, transactions]);
+    return {
+      series: seriesData,
+      selectedCategoryList: selectedCategories,
+      hasData: dataHasValue
+    };
+  }, [reportBuckets, resolution, selectedCategories]);
 
   const selectClass =
     "mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10";
@@ -315,10 +195,10 @@ export default function SpendingByCategoryLineChartCard({
   const checkboxClass =
     "h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900/20";
 
-  const isLoading = categoriesLoading || transactionsLoading;
+  const isLoading = categoriesLoading || reportLoading;
 
   const showEmptySelection = !isLoading && !error && selectedCategories.length === 0;
-  const showNoData = !isLoading && !error && selectedCategories.length > 0 && series.length === 0;
+  const showNoData = !isLoading && !error && selectedCategories.length > 0 && !hasData;
 
   return (
     <Card className={`lg:col-span-12 ${className}`.trim()}>

@@ -1,3 +1,4 @@
+import calendar
 import os
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -130,6 +131,7 @@ transactions = Table(
     Column("type", String(20), nullable=False),
     Column("category", String(255)),
     Column("date", Date, nullable=False),
+    Column("converted_at", Date),
     Column("notes", String(500)),
 )
 
@@ -324,6 +326,18 @@ class TransactionResponse(TransactionPayload):
     currency: str
 
 
+class ConvertToHomePayload(BaseModel):
+    record_id: int
+    conversion_date: date
+
+
+class ConvertToHomeResponse(BaseModel):
+    transaction_id: int
+    amount: Decimal
+    currency: str
+    converted_at: date
+
+
 class BudgetRulePayload(BaseModel):
     rule_type: str
     amount: Decimal
@@ -431,6 +445,32 @@ class MonthlyExpenseGroupResponse(BaseModel):
     needs_source_currencies: list[str] | None = None
     wants_source_currencies: list[str] | None = None
     investments_source_currencies: list[str] | None = None
+
+
+class ExpenseTrendBucket(BaseModel):
+    bucket_start: date
+    total: Decimal
+    source_currencies: list[str] | None = None
+
+
+class ExpenseTrendResponse(BaseModel):
+    resolution: str
+    timeframe: str
+    home_currency: str | None = None
+    buckets: list[ExpenseTrendBucket]
+
+
+class CategoryTrendBucket(BaseModel):
+    bucket_start: date
+    totals_by_category: dict[str, Decimal]
+    source_currencies: list[str] | None = None
+
+
+class CategoryTrendResponse(BaseModel):
+    resolution: str
+    timeframe: str
+    home_currency: str | None = None
+    buckets: list[CategoryTrendBucket]
 
 
 class IncomeProjectionEntry(BaseModel):
@@ -734,6 +774,15 @@ def shift_month(value: date, months: int) -> date:
     return date(year, month, 1)
 
 
+def shift_month_keep_day(value: date, months: int) -> date:
+    month_index = (value.year * 12 + value.month - 1) + months
+    year = month_index // 12
+    month = month_index % 12 + 1
+    last_day = calendar.monthrange(year, month)[1]
+    day = min(value.day, last_day)
+    return date(year, month, day)
+
+
 def iter_months(start_value: date, end_value: date) -> list[date]:
     months: list[date] = []
     cursor = month_start(start_value)
@@ -757,6 +806,79 @@ def parse_month_value(value: str) -> date:
             return datetime.strptime(value, "%Y-%m-%d").date()
         except ValueError as exc:
             raise ValueError("Invalid month format. Use YYYY-MM.") from exc
+
+
+REPORT_RESOLUTIONS = {"daily", "weekly", "monthly", "yearly"}
+EXPENSE_TIMEFRAMES = {"1W", "1M", "3M", "6M", "YTD", "1Y", "2Y", "5Y"}
+CATEGORY_TIMEFRAMES = {"30D", "3M", "6M", "1Y", "2Y"}
+
+
+def normalize_report_resolution(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in REPORT_RESOLUTIONS:
+        raise ValueError("Invalid resolution.")
+    return normalized
+
+
+def normalize_report_timeframe(value: str, allowed: set[str]) -> str:
+    normalized = value.strip().upper()
+    if normalized not in allowed:
+        raise ValueError("Invalid timeframe.")
+    return normalized
+
+
+def get_report_bucket_start(value: date, resolution: str) -> date:
+    if resolution == "weekly":
+        return value - timedelta(days=value.weekday())
+    if resolution == "monthly":
+        return value.replace(day=1)
+    if resolution == "yearly":
+        return value.replace(month=1, day=1)
+    return value
+
+
+def add_report_interval(value: date, resolution: str) -> date:
+    if resolution == "weekly":
+        return value + timedelta(days=7)
+    if resolution == "monthly":
+        return shift_month(value, 1)
+    if resolution == "yearly":
+        return date(value.year + 1, 1, 1)
+    return value + timedelta(days=1)
+
+
+def expense_timeframe_start(end_date: date, timeframe: str) -> date:
+    if timeframe == "1W":
+        return end_date - timedelta(days=6)
+    if timeframe == "1M":
+        return shift_month_keep_day(end_date, -1)
+    if timeframe == "3M":
+        return shift_month_keep_day(end_date, -3)
+    if timeframe == "6M":
+        return shift_month_keep_day(end_date, -6)
+    if timeframe == "YTD":
+        return date(end_date.year, 1, 1)
+    if timeframe == "1Y":
+        return shift_month_keep_day(end_date, -12)
+    if timeframe == "2Y":
+        return shift_month_keep_day(end_date, -24)
+    if timeframe == "5Y":
+        return shift_month_keep_day(end_date, -60)
+    raise ValueError("Invalid timeframe.")
+
+
+def category_timeframe_start(end_date: date, timeframe: str) -> date:
+    if timeframe == "30D":
+        return end_date - timedelta(days=29)
+    if timeframe == "3M":
+        return shift_month_keep_day(end_date, -3)
+    if timeframe == "6M":
+        return shift_month_keep_day(end_date, -6)
+    if timeframe == "1Y":
+        return shift_month_keep_day(end_date, -12)
+    if timeframe == "2Y":
+        return shift_month_keep_day(end_date, -24)
+    raise ValueError("Invalid timeframe.")
 
 
 def coerce_decimal(value: Decimal | float | int | str) -> Decimal:
@@ -2037,6 +2159,82 @@ def delete_transaction(
     return {"status": "deleted"}
 
 
+@app.post("/currency/convert-to-home", response_model=ConvertToHomeResponse)
+def convert_to_home_currency(
+    payload: ConvertToHomePayload, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> ConvertToHomeResponse:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        home_currency = resolve_default_currency(conn, user_id)
+        txn_row = conn.execute(
+            select(transactions.c.id, transactions.c.amount, transactions.c.currency)
+            .where(
+                transactions.c.id == payload.record_id,
+                transactions.c.user_id == user_id,
+            )
+        ).mappings().first()
+        if not txn_row:
+            entry_row = conn.execute(
+                select(investment_entries.c.transaction_id).where(
+                    investment_entries.c.id == payload.record_id,
+                    investment_entries.c.user_id == user_id,
+                )
+            ).first()
+            if entry_row:
+                txn_row = conn.execute(
+                    select(transactions.c.id, transactions.c.amount, transactions.c.currency).where(
+                        transactions.c.id == entry_row[0],
+                        transactions.c.user_id == user_id,
+                    )
+                ).mappings().first()
+        if not txn_row:
+            raise HTTPException(status_code=404, detail="Record not found.")
+
+        try:
+            source_currency = normalize_currency(txn_row["currency"])
+            target_currency = normalize_currency(home_currency)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        try:
+            converted_amount = convert_amount(
+                txn_row["amount"],
+                source_currency,
+                target_currency,
+                rate_provider=FX_PROVIDER,
+                date=payload.conversion_date,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        converted_amount = converted_amount.quantize(Decimal("0.01"))
+
+        updated = conn.execute(
+            update(transactions)
+            .where(transactions.c.id == txn_row["id"], transactions.c.user_id == user_id)
+            .values(
+                amount=converted_amount,
+                currency=target_currency,
+                converted_at=payload.conversion_date,
+            )
+            .returning(
+                transactions.c.id,
+                transactions.c.amount,
+                transactions.c.currency,
+                transactions.c.converted_at,
+            )
+        ).mappings().first()
+
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to convert currency.")
+
+    return ConvertToHomeResponse(
+        transaction_id=updated["id"],
+        amount=updated["amount"],
+        currency=updated["currency"],
+        converted_at=updated["converted_at"],
+    )
+
+
 @app.get("/income/projections", response_model=list[IncomeProjectionEntry])
 def income_projections(
     start_date: date = Query(...),
@@ -2658,6 +2856,169 @@ def monthly_expense_groups(
         needs_source_currencies=source_currencies.get("needs"),
         wants_source_currencies=source_currencies.get("wants"),
         investments_source_currencies=source_currencies.get("investments"),
+    )
+
+
+@app.get(
+    "/reports/expense-trends",
+    response_model=ExpenseTrendResponse,
+    response_model_exclude_none=True,
+)
+def expense_trends(
+    account_id: int | None = Query(None),
+    resolution: str = Query("daily"),
+    timeframe: str = Query("1Y"),
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> ExpenseTrendResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        resolution = normalize_report_resolution(resolution)
+        timeframe = normalize_report_timeframe(timeframe, EXPENSE_TIMEFRAMES)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    conditions = [transactions.c.user_id == user_id, transactions.c.type == "expense"]
+    if account_id is not None:
+        conditions.append(transactions.c.account_id == account_id)
+
+    with engine.begin() as conn:
+        home_currency = resolve_default_currency(conn, user_id)
+        max_date = conn.execute(
+            select(func.max(transactions.c.date)).where(*conditions)
+        ).scalar_one_or_none()
+        if not max_date:
+            return ExpenseTrendResponse(
+                resolution=resolution,
+                timeframe=timeframe,
+                home_currency=home_currency,
+                buckets=[],
+            )
+        range_start = expense_timeframe_start(max_date, timeframe)
+        rows = conn.execute(
+            select(transactions.c.date, transactions.c.amount, transactions.c.currency)
+            .where(
+                *conditions,
+                transactions.c.date >= range_start,
+                transactions.c.date <= max_date,
+            )
+            .order_by(transactions.c.date.asc())
+        ).mappings().all()
+
+    totals_by_bucket: dict[date, dict[str, object]] = {}
+    for row in rows:
+        bucket_start = get_report_bucket_start(row["date"], resolution)
+        entry = totals_by_bucket.setdefault(
+            bucket_start, {"total": Decimal("0"), "source_currencies": set()}
+        )
+        currency = safe_normalize_currency(row["currency"], home_currency)
+        entry["source_currencies"].add(currency)
+        entry["total"] += convert_amount_safe(row["amount"], currency, home_currency)
+
+    buckets: list[ExpenseTrendBucket] = []
+    cursor = get_report_bucket_start(range_start, resolution)
+    end_bucket = get_report_bucket_start(max_date, resolution)
+    while cursor <= end_bucket:
+        entry = totals_by_bucket.get(cursor)
+        buckets.append(
+            ExpenseTrendBucket(
+                bucket_start=cursor,
+                total=entry["total"] if entry else Decimal("0"),
+                source_currencies=sorted(entry["source_currencies"])
+                if entry and entry["source_currencies"]
+                else None,
+            )
+        )
+        cursor = add_report_interval(cursor, resolution)
+
+    return ExpenseTrendResponse(
+        resolution=resolution,
+        timeframe=timeframe,
+        home_currency=home_currency,
+        buckets=buckets,
+    )
+
+
+@app.get(
+    "/reports/category-trends",
+    response_model=CategoryTrendResponse,
+    response_model_exclude_none=True,
+)
+def category_trends(
+    resolution: str = Query("weekly"),
+    timeframe: str = Query("3M"),
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> CategoryTrendResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        resolution = normalize_report_resolution(resolution)
+        timeframe = normalize_report_timeframe(timeframe, CATEGORY_TIMEFRAMES)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    conditions = [transactions.c.user_id == user_id, transactions.c.type == "expense"]
+    category_expr = func.coalesce(transactions.c.category, "Uncategorized").label("category")
+
+    with engine.begin() as conn:
+        home_currency = resolve_default_currency(conn, user_id)
+        max_date = conn.execute(
+            select(func.max(transactions.c.date)).where(*conditions)
+        ).scalar_one_or_none()
+        if not max_date:
+            return CategoryTrendResponse(
+                resolution=resolution,
+                timeframe=timeframe,
+                home_currency=home_currency,
+                buckets=[],
+            )
+        range_start = category_timeframe_start(max_date, timeframe)
+        rows = conn.execute(
+            select(
+                transactions.c.date,
+                transactions.c.amount,
+                transactions.c.currency,
+                category_expr,
+            )
+            .where(
+                *conditions,
+                transactions.c.date >= range_start,
+                transactions.c.date <= max_date,
+            )
+            .order_by(transactions.c.date.asc())
+        ).mappings().all()
+
+    totals_by_bucket: dict[date, dict[str, object]] = {}
+    for row in rows:
+        bucket_start = get_report_bucket_start(row["date"], resolution)
+        entry = totals_by_bucket.setdefault(
+            bucket_start, {"totals": {}, "source_currencies": set()}
+        )
+        category = row["category"]
+        currency = safe_normalize_currency(row["currency"], home_currency)
+        entry["source_currencies"].add(currency)
+        converted_amount = convert_amount_safe(row["amount"], currency, home_currency)
+        entry["totals"][category] = entry["totals"].get(category, Decimal("0")) + converted_amount
+
+    buckets: list[CategoryTrendBucket] = []
+    cursor = get_report_bucket_start(range_start, resolution)
+    end_bucket = get_report_bucket_start(max_date, resolution)
+    while cursor <= end_bucket:
+        entry = totals_by_bucket.get(cursor)
+        buckets.append(
+            CategoryTrendBucket(
+                bucket_start=cursor,
+                totals_by_category=entry["totals"] if entry else {},
+                source_currencies=sorted(entry["source_currencies"])
+                if entry and entry["source_currencies"]
+                else None,
+            )
+        )
+        cursor = add_report_interval(cursor, resolution)
+
+    return CategoryTrendResponse(
+        resolution=resolution,
+        timeframe=timeframe,
+        home_currency=home_currency,
+        buckets=buckets,
     )
 
 
