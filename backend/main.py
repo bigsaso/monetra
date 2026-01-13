@@ -618,6 +618,20 @@ class InvestmentActivityResponse(BaseModel):
     date: date
 
 
+class InvestmentRealizedResponse(BaseModel):
+    id: int
+    investment_id: int
+    investment_name: str
+    investment_symbol: str | None = None
+    quantity_sold: Decimal
+    average_buy_price: Decimal | None = None
+    sell_price_per_share: Decimal | None = None
+    total_proceeds: Decimal | None = None
+    realized_profit_loss: Decimal | None = None
+    currency: str | None = None
+    sell_date: date
+
+
 class TransactionImportPreviewResponse(BaseModel):
     transactions: list[ParsedTransaction]
     total_count: int
@@ -1632,6 +1646,75 @@ def list_investment_activity(
         )
         for row in rows
     ]
+
+
+@app.get("/investments/realized", response_model=list[InvestmentRealizedResponse])
+def list_realized_investments(
+    investment_id: int | None = None,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[InvestmentRealizedResponse]:
+    user_id = get_user_id(x_user_id)
+    conditions = [investment_entries.c.user_id == user_id, investment_entries.c.type == "sell"]
+    if investment_id is not None:
+        conditions.append(investment_entries.c.investment_id == investment_id)
+    stmt = (
+        select(
+            investment_entries.c.id,
+            investment_entries.c.investment_id,
+            investment_entries.c.quantity,
+            investment_entries.c.price,
+            investment_entries.c.price_per_share,
+            investment_entries.c.total_amount,
+            investment_entries.c.currency,
+            investment_entries.c.cost_of_sold_shares,
+            investment_entries.c.realized_profit_loss,
+            investment_entries.c.date,
+            transactions.c.amount.label("transaction_amount"),
+            transactions.c.currency.label("transaction_currency"),
+            investments.c.name.label("investment_name"),
+            investments.c.symbol.label("investment_symbol"),
+        )
+        .select_from(
+            investment_entries.join(
+                investments, investment_entries.c.investment_id == investments.c.id
+            ).join(
+                transactions,
+                (investment_entries.c.transaction_id == transactions.c.id)
+                & (investment_entries.c.user_id == transactions.c.user_id),
+            )
+        )
+        .where(*conditions)
+        .order_by(investment_entries.c.date.desc(), investment_entries.c.id.desc())
+    )
+    with engine.begin() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    responses: list[InvestmentRealizedResponse] = []
+    for row in rows:
+        quantity = row["quantity"]
+        total_proceeds = row["total_amount"] or row["transaction_amount"]
+        cost_basis = row["cost_of_sold_shares"]
+        if cost_basis is None and total_proceeds is not None and row["realized_profit_loss"] is not None:
+            cost_basis = total_proceeds - row["realized_profit_loss"]
+        average_buy_price = None
+        if quantity and cost_basis is not None:
+            average_buy_price = cost_basis / quantity
+        responses.append(
+            InvestmentRealizedResponse(
+                id=row["id"],
+                investment_id=row["investment_id"],
+                investment_name=row["investment_name"],
+                investment_symbol=row["investment_symbol"],
+                quantity_sold=quantity,
+                average_buy_price=average_buy_price,
+                sell_price_per_share=row["price_per_share"] or row["price"],
+                total_proceeds=total_proceeds,
+                realized_profit_loss=row["realized_profit_loss"],
+                currency=row["currency"] or row["transaction_currency"],
+                sell_date=row["date"],
+            )
+        )
+    return responses
 
 
 @app.post("/investments", response_model=InvestmentResponse)

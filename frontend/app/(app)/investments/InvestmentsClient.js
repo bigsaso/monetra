@@ -21,6 +21,7 @@ import {
   TableHeader,
   TableRow
 } from "../../components/ui/table";
+import RealizedInvestmentsCard from "../../components/RealizedInvestmentsCard";
 
 const emptyForm = { name: "", symbol: "", asset_type: "stock" };
 
@@ -74,6 +75,9 @@ export default function InvestmentsClient() {
   const [homeCurrency, setHomeCurrency] = useState("USD");
   const [transactionCurrencyLookup, setTransactionCurrencyLookup] = useState({});
   const [form, setForm] = useState(emptyForm);
+  const [realized, setRealized] = useState([]);
+  const [realizedLoading, setRealizedLoading] = useState(true);
+  const [realizedError, setRealizedError] = useState("");
   const [convertTarget, setConvertTarget] = useState(null);
   const [convertDate, setConvertDate] = useState("");
   const [convertError, setConvertError] = useState("");
@@ -83,6 +87,9 @@ export default function InvestmentsClient() {
   const [saving, setSaving] = useState(false);
   const [activityLoading, setActivityLoading] = useState(true);
   const [activityError, setActivityError] = useState("");
+  const [activityInvestmentFilter, setActivityInvestmentFilter] = useState("all");
+  const [activityRowsPerPage, setActivityRowsPerPage] = useState(10);
+  const [activityPage, setActivityPage] = useState(1);
 
   const currencyFormatter = useMemo(
     () =>
@@ -103,6 +110,45 @@ export default function InvestmentsClient() {
       }),
     []
   );
+
+  const activityInvestmentOptions = useMemo(() => {
+    const lookup = new Map();
+    activity.forEach((entry) => {
+      if (entry?.investment_id == null) {
+        return;
+      }
+      const key = String(entry.investment_id);
+      if (!lookup.has(key)) {
+        lookup.set(key, {
+          id: key,
+          name: entry.investment_name || "Unknown investment",
+          symbol: entry.investment_symbol || ""
+        });
+      }
+    });
+    return Array.from(lookup.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  }, [activity]);
+
+  const filteredActivity = useMemo(() => {
+    if (activityInvestmentFilter === "all") {
+      return activity;
+    }
+    return activity.filter(
+      (entry) => String(entry.investment_id) === activityInvestmentFilter
+    );
+  }, [activity, activityInvestmentFilter]);
+
+  const totalActivityPages = Math.max(
+    1,
+    Math.ceil(filteredActivity.length / activityRowsPerPage)
+  );
+
+  const pagedActivity = useMemo(() => {
+    const start = (activityPage - 1) * activityRowsPerPage;
+    return filteredActivity.slice(start, start + activityRowsPerPage);
+  }, [activityPage, activityRowsPerPage, filteredActivity]);
 
   const loadPositions = async () => {
     setLoading(true);
@@ -137,6 +183,24 @@ export default function InvestmentsClient() {
       setActivityError(err.message);
     } finally {
       setActivityLoading(false);
+    }
+  };
+
+  const loadRealized = async () => {
+    setRealizedLoading(true);
+    setRealizedError("");
+    try {
+      const response = await fetch("/api/investments/realized");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load realized investments.");
+      }
+      const data = await response.json();
+      setRealized(data);
+    } catch (err) {
+      setRealizedError(err.message);
+    } finally {
+      setRealizedLoading(false);
     }
   };
 
@@ -183,6 +247,7 @@ export default function InvestmentsClient() {
   useEffect(() => {
     loadPositions();
     loadActivity();
+    loadRealized();
     loadTransactionCurrencies();
     loadHomeCurrency();
   }, []);
@@ -231,7 +296,7 @@ export default function InvestmentsClient() {
 
   const handleConvertOpen = (entry) => {
     setConvertTarget(entry);
-    setConvertDate(entry?.date || "");
+    setConvertDate(entry?.date || entry?.sell_date || "");
     setConvertError("");
   };
 
@@ -276,6 +341,22 @@ export default function InvestmentsClient() {
       setConvertSaving(false);
     }
   };
+
+  useEffect(() => {
+    setActivityPage(1);
+  }, [activityInvestmentFilter, activityRowsPerPage]);
+
+  useEffect(() => {
+    setActivityPage((prev) => {
+      if (prev < 1) {
+        return 1;
+      }
+      if (prev > totalActivityPages) {
+        return totalActivityPages;
+      }
+      return prev;
+    });
+  }, [totalActivityPages]);
 
   return (
     <div className="mx-auto w-full max-w-full px-4 py-10 sm:max-w-3xl">
@@ -401,19 +482,100 @@ export default function InvestmentsClient() {
           </CardContent>
         </Card>
 
+        <RealizedInvestmentsCard
+          realized={realized}
+          loading={realizedLoading}
+          error={realizedError}
+          onConvert={handleConvertOpen}
+          convertDisabled={convertSaving}
+          homeCurrency={homeCurrency}
+          formatMoney={formatMoney}
+          quantityFormatter={quantityFormatter}
+          isForeignCurrency={isForeignCurrency}
+        />
+
         <Card>
           <CardHeader>
             <CardTitle>Investment activity</CardTitle>
             <CardDescription>Review buy and sell activity tied to transactions.</CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto md:overflow-visible">
+            {activity.length > 0 ? (
+              <>
+                <div className="mb-4 flex flex-wrap items-center gap-4 text-sm text-slate-600">
+                  <label className="min-w-[200px]">
+                    Investment
+                    <select
+                      className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                      value={activityInvestmentFilter}
+                      onChange={(event) =>
+                        setActivityInvestmentFilter(event.target.value)
+                      }
+                    >
+                      <option value="all">All investments</option>
+                      {activityInvestmentOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.name}
+                          {option.symbol ? ` (${option.symbol})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Rows per page
+                    <select
+                      className="ml-2 rounded-md border border-slate-200 bg-white px-2 py-1 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                      value={activityRowsPerPage}
+                      onChange={(event) =>
+                        setActivityRowsPerPage(Number(event.target.value))
+                      }
+                    >
+                      {[5, 10, 25, 50].map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <span className="text-slate-500">
+                    Page {activityPage} of {totalActivityPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActivityPage((prev) => Math.max(1, prev - 1))
+                    }
+                    disabled={activityPage <= 1}
+                    className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActivityPage((prev) =>
+                        Math.min(totalActivityPages, prev + 1)
+                      )
+                    }
+                    disabled={activityPage >= totalActivityPages}
+                    className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Next
+                  </button>
+                </div>
+              </>
+            ) : null}
             {activityLoading ? <p>Loading activity...</p> : null}
             {activityError ? (
               <p className="text-sm text-rose-600">{activityError}</p>
             ) : null}
             {!activityLoading && activity.length === 0 ? (
               <p>No investment activity yet.</p>
-            ) : (
+            ) : null}
+            {!activityLoading && activity.length > 0 && filteredActivity.length === 0 ? (
+              <p>No activity matches that filter.</p>
+            ) : null}
+            {!activityLoading && filteredActivity.length > 0 ? (
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -427,7 +589,7 @@ export default function InvestmentsClient() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {activity.map((entry) => (
+                  {pagedActivity.map((entry) => (
                     <TableRow key={entry.id}>
                       <TableCell>
                         {entry.investment_name}
@@ -452,7 +614,8 @@ export default function InvestmentsClient() {
                         </Link>
                       </TableCell>
                       <TableCell className="flex flex-wrap gap-2">
-                        {isForeignCurrency(
+                        {entry.type === "sell" &&
+                        isForeignCurrency(
                           transactionCurrencyLookup[entry.transaction_id],
                           homeCurrency
                         ) ? (
@@ -470,7 +633,7 @@ export default function InvestmentsClient() {
                   ))}
                 </TableBody>
               </Table>
-            )}
+            ) : null}
           </CardContent>
         </Card>
       </div>
