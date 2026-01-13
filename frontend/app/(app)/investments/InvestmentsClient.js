@@ -75,7 +75,7 @@ const buildEmptySellForm = (dateValue) => ({
   account_id: "",
   amount: "",
   currency: "",
-  type: "investment",
+  type: "income",
   category: "",
   date: dateValue,
   notes: "",
@@ -527,7 +527,7 @@ export default function InvestmentsClient() {
         account_id: Number(sellForm.account_id),
         amount: amountValue,
         currency: sellForm.currency || null,
-        type: "investment",
+        type: "income",
         category: sellForm.category || null,
         date: sellForm.date,
         notes: sellForm.notes || null,
@@ -635,7 +635,7 @@ export default function InvestmentsClient() {
       if (!response.ok) {
         throw new Error(data?.detail || "Failed to convert currency.");
       }
-      await loadActivity();
+      await Promise.all([loadActivity(), loadRealized()]);
       handleConvertClose();
     } catch (err) {
       setConvertError(err.message);

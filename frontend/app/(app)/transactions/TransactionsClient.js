@@ -169,6 +169,13 @@ const formatAmountSign = (type) => {
   return "";
 };
 
+const formatTransactionTypeLabel = (transaction) => {
+  if (transaction?.investment_type === "sell") {
+    return "Investment Sold";
+  }
+  return transaction?.type || "";
+};
+
 const FALLBACK_CURRENCY = "USD";
 
 const normalizeCurrencyValue = (value) =>
@@ -1561,7 +1568,7 @@ export default function TransactionsClient() {
                   <TableCell>{transaction.date}</TableCell>
                   <TableCell>{accountLookup[transaction.account_id] || "-"}</TableCell>
                   <TableCell className="capitalize">
-                    {transaction.type}
+                    {formatTransactionTypeLabel(transaction)}
                   </TableCell>
                   <TableCell>{transaction.category || "-"}</TableCell>
                   <TableCell className="text-right font-medium">

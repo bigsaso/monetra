@@ -77,66 +77,80 @@ export default function RealizedInvestmentsCard({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {realized.map((entry) => (
-                <TableRow
-                  key={entry.id}
-                  onClick={onTransactionSelect ? () => onTransactionSelect(entry) : undefined}
-                  onKeyDown={(event) => handleRowKeyDown(event, entry)}
-                  tabIndex={onTransactionSelect ? 0 : undefined}
-                  role={onTransactionSelect ? "button" : undefined}
-                  className={onTransactionSelect ? "cursor-pointer" : undefined}
-                >
-                  <TableCell>
-                    <div className="font-medium text-slate-900">
-                      {entry.investment_name}
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      {entry.investment_symbol || "-"}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {quantityFormatter.format(Number(entry.quantity_sold || 0))}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {renderMoney(entry.average_buy_price, entry.currency, formatMoney)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {renderMoney(entry.sell_price_per_share, entry.currency, formatMoney)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {renderMoney(entry.total_proceeds, entry.currency, formatMoney)}
-                  </TableCell>
-                  <TableCell
-                    className={`text-right font-medium ${getProfitLossClass(
-                      entry.realized_profit_loss
-                    )}`}
+              {realized.map((entry) => {
+                const isConverted = Boolean(entry.converted_at);
+                const showConvert =
+                  isForeignCurrency(entry.currency, homeCurrency) || isConverted;
+                const tooltip = isConverted ? "Already converted to home currency." : "";
+                const convertButton = (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onConvert(entry);
+                    }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    disabled={convertDisabled || isConverted}
                   >
-                    {formatProfitLoss(
-                      entry.realized_profit_loss,
-                      entry.currency,
-                      formatMoney
-                    )}
-                  </TableCell>
-                  <TableCell>{entry.currency || "-"}</TableCell>
-                  <TableCell>{entry.sell_date}</TableCell>
-                  <TableCell>
-                    {isForeignCurrency(entry.currency, homeCurrency) ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onConvert(entry);
-                        }}
-                        onKeyDown={(event) => event.stopPropagation()}
-                        disabled={convertDisabled}
-                      >
-                        Convert to {homeCurrency}
-                      </Button>
-                    ) : null}
-                  </TableCell>
-                </TableRow>
-              ))}
+                    Convert to {homeCurrency}
+                  </Button>
+                );
+
+                return (
+                  <TableRow
+                    key={entry.id}
+                    onClick={onTransactionSelect ? () => onTransactionSelect(entry) : undefined}
+                    onKeyDown={(event) => handleRowKeyDown(event, entry)}
+                    tabIndex={onTransactionSelect ? 0 : undefined}
+                    role={onTransactionSelect ? "button" : undefined}
+                    className={onTransactionSelect ? "cursor-pointer" : undefined}
+                  >
+                    <TableCell>
+                      <div className="font-medium text-slate-900">
+                        {entry.investment_name}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {entry.investment_symbol || "-"}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {quantityFormatter.format(Number(entry.quantity_sold || 0))}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {renderMoney(entry.average_buy_price, entry.currency, formatMoney)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {renderMoney(entry.sell_price_per_share, entry.currency, formatMoney)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {renderMoney(entry.total_proceeds, entry.currency, formatMoney)}
+                    </TableCell>
+                    <TableCell
+                      className={`text-right font-medium ${getProfitLossClass(
+                        entry.realized_profit_loss
+                      )}`}
+                    >
+                      {formatProfitLoss(
+                        entry.realized_profit_loss,
+                        entry.currency,
+                        formatMoney
+                      )}
+                    </TableCell>
+                    <TableCell>{entry.currency || "-"}</TableCell>
+                    <TableCell>{entry.sell_date}</TableCell>
+                    <TableCell>
+                      {showConvert ? (
+                        isConverted ? (
+                          <span title={tooltip}>{convertButton}</span>
+                        ) : (
+                          convertButton
+                        )
+                      ) : null}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         )}

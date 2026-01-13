@@ -630,6 +630,7 @@ class InvestmentRealizedResponse(BaseModel):
     realized_profit_loss: Decimal | None = None
     currency: str | None = None
     sell_date: date
+    converted_at: date | None = None
 
 
 class TransactionImportPreviewResponse(BaseModel):
@@ -1671,6 +1672,7 @@ def list_realized_investments(
             investment_entries.c.date,
             transactions.c.amount.label("transaction_amount"),
             transactions.c.currency.label("transaction_currency"),
+            transactions.c.converted_at,
             investments.c.name.label("investment_name"),
             investments.c.symbol.label("investment_symbol"),
         )
@@ -1712,6 +1714,7 @@ def list_realized_investments(
                 realized_profit_loss=row["realized_profit_loss"],
                 currency=row["currency"] or row["transaction_currency"],
                 sell_date=row["date"],
+                converted_at=row["converted_at"],
             )
         )
     return responses
@@ -2472,48 +2475,49 @@ def convert_to_home_currency(
     user_id = get_user_id(x_user_id)
     with engine.begin() as conn:
         home_currency = resolve_default_currency(conn, user_id)
-        txn_row = conn.execute(
-            select(transactions.c.id, transactions.c.amount, transactions.c.currency, transactions.c.type)
-            .where(
-                transactions.c.id == payload.record_id,
-                transactions.c.user_id == user_id,
+        entry_row = conn.execute(
+            select(
+                investment_entries.c.id,
+                investment_entries.c.transaction_id,
+                investment_entries.c.type,
+                investment_entries.c.investment_id,
+            ).where(
+                investment_entries.c.id == payload.record_id,
+                investment_entries.c.user_id == user_id,
             )
         ).mappings().first()
-        investment_entry = None
-        if txn_row:
-            investment_entry = conn.execute(
+
+        investment_entry = entry_row
+        txn_row = None
+        if entry_row:
+            txn_row = conn.execute(
                 select(
-                    investment_entries.c.id,
-                    investment_entries.c.type,
-                    investment_entries.c.investment_id,
+                    transactions.c.id,
+                    transactions.c.amount,
+                    transactions.c.currency,
+                    transactions.c.type,
                 ).where(
-                    investment_entries.c.transaction_id == txn_row["id"],
-                    investment_entries.c.user_id == user_id,
+                    transactions.c.id == entry_row["transaction_id"],
+                    transactions.c.user_id == user_id,
                 )
             ).mappings().first()
         if not txn_row:
-            entry_row = conn.execute(
-                select(
-                    investment_entries.c.id,
-                    investment_entries.c.transaction_id,
-                    investment_entries.c.type,
-                    investment_entries.c.investment_id,
-                ).where(
-                    investment_entries.c.id == payload.record_id,
-                    investment_entries.c.user_id == user_id,
+            txn_row = conn.execute(
+                select(transactions.c.id, transactions.c.amount, transactions.c.currency, transactions.c.type)
+                .where(
+                    transactions.c.id == payload.record_id,
+                    transactions.c.user_id == user_id,
                 )
             ).mappings().first()
-            if entry_row:
-                investment_entry = entry_row
-                txn_row = conn.execute(
+            if txn_row:
+                investment_entry = conn.execute(
                     select(
-                        transactions.c.id,
-                        transactions.c.amount,
-                        transactions.c.currency,
-                        transactions.c.type,
+                        investment_entries.c.id,
+                        investment_entries.c.type,
+                        investment_entries.c.investment_id,
                     ).where(
-                        transactions.c.id == entry_row["transaction_id"],
-                        transactions.c.user_id == user_id,
+                        investment_entries.c.transaction_id == txn_row["id"],
+                        investment_entries.c.user_id == user_id,
                     )
                 ).mappings().first()
         if not txn_row:

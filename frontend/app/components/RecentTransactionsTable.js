@@ -37,6 +37,13 @@ export default function RecentTransactionsTable({
     [transactions]
   );
 
+  const formatTransactionTypeLabel = (transaction) => {
+    if (transaction?.investment_type === "sell") {
+      return "Investment Sold";
+    }
+    return transaction?.type || "";
+  };
+
   return (
     <Card className="lg:col-span-12">
       <CardHeader>
@@ -76,7 +83,7 @@ export default function RecentTransactionsTable({
                     <TableCell>{formatDate(transaction.date)}</TableCell>
                     <TableCell>{account?.name || "-"}</TableCell>
                     <TableCell className="capitalize">
-                      {transaction.type}
+                      {formatTransactionTypeLabel(transaction)}
                     </TableCell>
                     <TableCell>{transaction.category || "-"}</TableCell>
                     <TableCell className={`text-right font-medium ${amountTone}`}>
