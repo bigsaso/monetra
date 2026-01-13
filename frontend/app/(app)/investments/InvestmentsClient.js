@@ -73,7 +73,6 @@ export default function InvestmentsClient() {
   const [positions, setPositions] = useState([]);
   const [activity, setActivity] = useState([]);
   const [homeCurrency, setHomeCurrency] = useState("USD");
-  const [transactionCurrencyLookup, setTransactionCurrencyLookup] = useState({});
   const [form, setForm] = useState(emptyForm);
   const [realized, setRealized] = useState([]);
   const [realizedLoading, setRealizedLoading] = useState(true);
@@ -204,28 +203,6 @@ export default function InvestmentsClient() {
     }
   };
 
-  const loadTransactionCurrencies = async () => {
-    try {
-      const response = await fetch("/api/transactions");
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data?.detail || "Failed to load transactions.");
-      }
-      const data = await response.json();
-      const lookup = {};
-      data.forEach((transaction) => {
-        if (transaction?.id == null) {
-          return;
-        }
-        lookup[transaction.id] = transaction.currency;
-      });
-      setTransactionCurrencyLookup(lookup);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(err);
-    }
-  };
-
   const loadHomeCurrency = async () => {
     try {
       const response = await fetch("/api/user-settings");
@@ -248,7 +225,6 @@ export default function InvestmentsClient() {
     loadPositions();
     loadActivity();
     loadRealized();
-    loadTransactionCurrencies();
     loadHomeCurrency();
   }, []);
 
@@ -581,15 +557,14 @@ export default function InvestmentsClient() {
                   <TableRow>
                     <TableHead>Investment</TableHead>
                     <TableHead>Action</TableHead>
-                    <TableHead className="text-right">Quantity</TableHead>
-                    <TableHead className="text-right">Price</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Transaction</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pagedActivity.map((entry) => (
+                  <TableHead className="text-right">Quantity</TableHead>
+                  <TableHead className="text-right">Price</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Transaction</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pagedActivity.map((entry) => (
                     <TableRow key={entry.id}>
                       <TableCell>
                         {entry.investment_name}
@@ -612,22 +587,6 @@ export default function InvestmentsClient() {
                         >
                           View transaction #{entry.transaction_id}
                         </Link>
-                      </TableCell>
-                      <TableCell className="flex flex-wrap gap-2">
-                        {entry.type === "sell" &&
-                        isForeignCurrency(
-                          transactionCurrencyLookup[entry.transaction_id],
-                          homeCurrency
-                        ) ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => handleConvertOpen(entry)}
-                            disabled={convertSaving}
-                          >
-                            Convert to {homeCurrency}
-                          </Button>
-                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}

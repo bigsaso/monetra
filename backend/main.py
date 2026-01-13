@@ -2473,28 +2473,70 @@ def convert_to_home_currency(
     with engine.begin() as conn:
         home_currency = resolve_default_currency(conn, user_id)
         txn_row = conn.execute(
-            select(transactions.c.id, transactions.c.amount, transactions.c.currency)
+            select(transactions.c.id, transactions.c.amount, transactions.c.currency, transactions.c.type)
             .where(
                 transactions.c.id == payload.record_id,
                 transactions.c.user_id == user_id,
             )
         ).mappings().first()
+        investment_entry = None
+        if txn_row:
+            investment_entry = conn.execute(
+                select(
+                    investment_entries.c.id,
+                    investment_entries.c.type,
+                    investment_entries.c.investment_id,
+                ).where(
+                    investment_entries.c.transaction_id == txn_row["id"],
+                    investment_entries.c.user_id == user_id,
+                )
+            ).mappings().first()
         if not txn_row:
             entry_row = conn.execute(
-                select(investment_entries.c.transaction_id).where(
+                select(
+                    investment_entries.c.id,
+                    investment_entries.c.transaction_id,
+                    investment_entries.c.type,
+                    investment_entries.c.investment_id,
+                ).where(
                     investment_entries.c.id == payload.record_id,
                     investment_entries.c.user_id == user_id,
                 )
-            ).first()
+            ).mappings().first()
             if entry_row:
+                investment_entry = entry_row
                 txn_row = conn.execute(
-                    select(transactions.c.id, transactions.c.amount, transactions.c.currency).where(
-                        transactions.c.id == entry_row[0],
+                    select(
+                        transactions.c.id,
+                        transactions.c.amount,
+                        transactions.c.currency,
+                        transactions.c.type,
+                    ).where(
+                        transactions.c.id == entry_row["transaction_id"],
                         transactions.c.user_id == user_id,
                     )
                 ).mappings().first()
         if not txn_row:
             raise HTTPException(status_code=404, detail="Record not found.")
+        if investment_entry:
+            if investment_entry["type"] != "sell":
+                active_shares = conn.execute(
+                    select(investments.c.total_shares).where(
+                        investments.c.id == investment_entry["investment_id"],
+                        investments.c.user_id == user_id,
+                    )
+                ).scalar()
+                if active_shares is not None and active_shares > Decimal("0"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Active investment positions cannot be converted.",
+                    )
+                raise HTTPException(
+                    status_code=400,
+                    detail="Investment buy transactions cannot be converted.",
+                )
+        elif txn_row["type"] == "investment":
+            raise HTTPException(status_code=400, detail="Investment transactions cannot be converted.")
 
         try:
             source_currency = normalize_currency(txn_row["currency"])

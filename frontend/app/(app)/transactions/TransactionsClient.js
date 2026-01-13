@@ -183,6 +183,16 @@ const isForeignCurrency = (currency, homeCurrency) => {
   return normalizedCurrency !== normalizedHome;
 };
 
+const isConvertibleTransaction = (transaction, homeCurrency) => {
+  if (!isForeignCurrency(transaction?.currency, homeCurrency)) {
+    return false;
+  }
+  if (transaction?.investment_id != null || transaction?.investment_type) {
+    return false;
+  }
+  return transaction?.type !== "investment";
+};
+
 const formatCurrency = (value, currency) => {
   const amount = Number(value || 0);
   const code = String(currency || FALLBACK_CURRENCY).toUpperCase();
@@ -1560,7 +1570,7 @@ export default function TransactionsClient() {
                   </TableCell>
                   <TableCell>{transaction.notes || "-"}</TableCell>
                   <TableCell className="flex flex-wrap gap-2">
-                    {isForeignCurrency(transaction.currency, homeCurrency) ? (
+                    {isConvertibleTransaction(transaction, homeCurrency) ? (
                       <button
                         type="button"
                         onClick={() => handleConvertOpen(transaction)}
