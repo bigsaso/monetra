@@ -33,12 +33,23 @@ export default function RealizedInvestmentsCard({
   loading,
   error,
   onConvert,
+  onTransactionSelect,
   convertDisabled,
   homeCurrency,
   formatMoney,
   quantityFormatter,
   isForeignCurrency
 }) {
+  const handleRowKeyDown = (event, entry) => {
+    if (!onTransactionSelect) {
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onTransactionSelect(entry);
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -67,7 +78,14 @@ export default function RealizedInvestmentsCard({
             </TableHeader>
             <TableBody>
               {realized.map((entry) => (
-                <TableRow key={entry.id}>
+                <TableRow
+                  key={entry.id}
+                  onClick={onTransactionSelect ? () => onTransactionSelect(entry) : undefined}
+                  onKeyDown={(event) => handleRowKeyDown(event, entry)}
+                  tabIndex={onTransactionSelect ? 0 : undefined}
+                  role={onTransactionSelect ? "button" : undefined}
+                  className={onTransactionSelect ? "cursor-pointer" : undefined}
+                >
                   <TableCell>
                     <div className="font-medium text-slate-900">
                       {entry.investment_name}
@@ -106,7 +124,11 @@ export default function RealizedInvestmentsCard({
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={() => onConvert(entry)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onConvert(entry);
+                        }}
+                        onKeyDown={(event) => event.stopPropagation()}
                         disabled={convertDisabled}
                       >
                         Convert to {homeCurrency}

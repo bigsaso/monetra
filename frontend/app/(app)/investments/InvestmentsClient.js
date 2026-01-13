@@ -22,6 +22,8 @@ import {
   TableRow
 } from "../../components/ui/table";
 import RealizedInvestmentsCard from "../../components/RealizedInvestmentsCard";
+import TransactionDetailModal from "../../components/TransactionDetailModal";
+import { CURRENCY_OPTIONS } from "../../../lib/currencies";
 
 const emptyForm = { name: "", symbol: "", asset_type: "stock" };
 
@@ -69,6 +71,20 @@ const formatMoney = (value, currency) => {
   }
 };
 
+const buildEmptySellForm = (dateValue) => ({
+  account_id: "",
+  amount: "",
+  currency: "",
+  type: "investment",
+  category: "",
+  date: dateValue,
+  notes: "",
+  investment_id: "",
+  quantity: "",
+  price: "",
+  investment_type: "sell"
+});
+
 export default function InvestmentsClient() {
   const [positions, setPositions] = useState([]);
   const [activity, setActivity] = useState([]);
@@ -89,6 +105,23 @@ export default function InvestmentsClient() {
   const [activityInvestmentFilter, setActivityInvestmentFilter] = useState("all");
   const [activityRowsPerPage, setActivityRowsPerPage] = useState(10);
   const [activityPage, setActivityPage] = useState(1);
+  const [accounts, setAccounts] = useState([]);
+  const [accountsError, setAccountsError] = useState("");
+  const [categories, setCategories] = useState([]);
+  const [categoriesError, setCategoriesError] = useState("");
+  const [sellModalOpen, setSellModalOpen] = useState(false);
+  const [sellTarget, setSellTarget] = useState(null);
+  const [sellForm, setSellForm] = useState(buildEmptySellForm(""));
+  const [sellError, setSellError] = useState("");
+  const [sellSaving, setSellSaving] = useState(false);
+  const [transactionLookup, setTransactionLookup] = useState(null);
+  const [transactionLookupLoading, setTransactionLookupLoading] = useState(false);
+  const [transactionLookupError, setTransactionLookupError] = useState("");
+  const [transactionModalOpen, setTransactionModalOpen] = useState(false);
+  const [selectedTransactionId, setSelectedTransactionId] = useState(null);
+  const [selectedTransactionFallback, setSelectedTransactionFallback] = useState(null);
+  const [selectedTransactionInvestment, setSelectedTransactionInvestment] = useState("");
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
   const currencyFormatter = useMemo(
     () =>
@@ -203,6 +236,36 @@ export default function InvestmentsClient() {
     }
   };
 
+  const loadAccounts = async () => {
+    setAccountsError("");
+    try {
+      const response = await fetch("/api/accounts");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load accounts.");
+      }
+      const data = await response.json();
+      setAccounts(data);
+    } catch (err) {
+      setAccountsError(err.message);
+    }
+  };
+
+  const loadCategories = async () => {
+    setCategoriesError("");
+    try {
+      const response = await fetch("/api/categories");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load categories.");
+      }
+      const data = await response.json();
+      setCategories(data);
+    } catch (err) {
+      setCategoriesError(err.message);
+    }
+  };
+
   const loadHomeCurrency = async () => {
     try {
       const response = await fetch("/api/user-settings");
@@ -227,6 +290,269 @@ export default function InvestmentsClient() {
     loadRealized();
     loadHomeCurrency();
   }, []);
+
+  const loadTransactionsLookup = async () => {
+    if (transactionLookupLoading || transactionLookup !== null) {
+      return;
+    }
+    setTransactionLookupLoading(true);
+    setTransactionLookupError("");
+    try {
+      const response = await fetch("/api/transactions");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load transactions.");
+      }
+      const data = await response.json();
+      const lookup = data.reduce((acc, transaction) => {
+        acc[transaction.id] = transaction;
+        return acc;
+      }, {});
+      setTransactionLookup(lookup);
+    } catch (err) {
+      setTransactionLookupError(err.message);
+    } finally {
+      setTransactionLookupLoading(false);
+    }
+  };
+
+  const buildInvestmentLabel = (name, symbol) => {
+    if (!name) {
+      return "";
+    }
+    return symbol ? `${name} (${symbol})` : name;
+  };
+
+  const isCloseEnough = (left, right) => {
+    const leftValue = Number(left);
+    const rightValue = Number(right);
+    if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) {
+      return false;
+    }
+    return Math.abs(leftValue - rightValue) < 0.0001;
+  };
+
+  const findTransactionIdForRealized = (entry) => {
+    const candidates = activity.filter(
+      (item) =>
+        item.type === "sell" &&
+        item.investment_id === entry.investment_id &&
+        item.date === entry.sell_date
+    );
+    if (candidates.length === 0) {
+      return null;
+    }
+    if (candidates.length === 1) {
+      return candidates[0].transaction_id;
+    }
+    const quantityMatches = candidates.filter((item) =>
+      isCloseEnough(item.quantity, entry.quantity_sold)
+    );
+    if (quantityMatches.length === 1) {
+      return quantityMatches[0].transaction_id;
+    }
+    const amountMatches = candidates.filter((item) =>
+      isCloseEnough(item.total_amount, entry.total_proceeds)
+    );
+    if (amountMatches.length === 1) {
+      return amountMatches[0].transaction_id;
+    }
+    return candidates[0].transaction_id;
+  };
+
+  const openTransactionModal = ({
+    transactionId,
+    fallback,
+    investmentLabel
+  }) => {
+    setSelectedTransactionId(transactionId || null);
+    setSelectedTransactionFallback(fallback || null);
+    setSelectedTransactionInvestment(investmentLabel || "");
+    setTransactionLookupError("");
+    setTransactionModalOpen(true);
+    if (transactionId || fallback?.investmentId) {
+      loadTransactionsLookup();
+    }
+  };
+
+  const closeTransactionModal = () => {
+    setTransactionModalOpen(false);
+    setSelectedTransactionId(null);
+    setSelectedTransactionFallback(null);
+    setSelectedTransactionInvestment("");
+    setTransactionLookupError("");
+  };
+
+  const handleActivityTransactionOpen = (entry) => {
+    openTransactionModal({
+      transactionId: entry.transaction_id,
+      fallback: {
+        amount: entry.total_amount ?? entry.price,
+        currency: entry.currency,
+        date: entry.date,
+        category: "",
+        investmentId: entry.investment_id
+      },
+      investmentLabel: buildInvestmentLabel(
+        entry.investment_name,
+        entry.investment_symbol
+      )
+    });
+  };
+
+  const handleRealizedTransactionOpen = (entry) => {
+    const transactionId = findTransactionIdForRealized(entry);
+    openTransactionModal({
+      transactionId,
+      fallback: {
+        amount: entry.total_proceeds,
+        currency: entry.currency,
+        date: entry.sell_date,
+        category: "",
+        investmentId: entry.investment_id
+      },
+      investmentLabel: buildInvestmentLabel(
+        entry.investment_name,
+        entry.investment_symbol
+      )
+    });
+  };
+
+  const handleTransactionRowKeyDown = (event, entry) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleActivityTransactionOpen(entry);
+    }
+  };
+
+  const selectedTransaction = useMemo(() => {
+    if (!transactionModalOpen) {
+      return null;
+    }
+    const fallback = selectedTransactionFallback || {};
+    let lookup =
+      selectedTransactionId && transactionLookup
+        ? transactionLookup[selectedTransactionId]
+        : null;
+    if (!lookup && transactionLookup && fallback.investmentId) {
+      lookup = Object.values(transactionLookup).find(
+        (transaction) =>
+          transaction.investment_id === fallback.investmentId &&
+          transaction.date === fallback.date &&
+          isCloseEnough(transaction.amount, fallback.amount)
+      );
+    }
+    return {
+      amount: lookup?.amount ?? fallback.amount,
+      currency: lookup?.currency ?? fallback.currency,
+      date: lookup?.date ?? fallback.date,
+      category: lookup?.category ?? fallback.category
+    };
+  }, [
+    selectedTransactionFallback,
+    selectedTransactionId,
+    transactionLookup,
+    transactionModalOpen
+  ]);
+
+  const resolveInvestmentCategory = () =>
+    categories.find((category) => category.group === "investments");
+
+  const openSellModal = (position) => {
+    const investmentCategory = resolveInvestmentCategory();
+    setSellTarget(position);
+    setSellForm({
+      ...buildEmptySellForm(today),
+      investment_id: position?.id ? String(position.id) : "",
+      currency: position?.currency || homeCurrency || "",
+      category: investmentCategory?.name || ""
+    });
+    setSellError("");
+    setSellModalOpen(true);
+  };
+
+  const closeSellModal = () => {
+    if (sellSaving) {
+      return;
+    }
+    setSellModalOpen(false);
+    setSellTarget(null);
+    setSellForm(buildEmptySellForm(today));
+    setSellError("");
+  };
+
+  const handleSellChange = (event) => {
+    const { name, value } = event.target;
+    setSellForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleSellSubmit = async (event) => {
+    event.preventDefault();
+    if (!sellForm.account_id) {
+      setSellError("Select an account.");
+      return;
+    }
+    if (!sellForm.category) {
+      setSellError("Select an investment category.");
+      return;
+    }
+    if (!sellForm.investment_id) {
+      setSellError("Select an investment to sell.");
+      return;
+    }
+    const amountValue = Number(sellForm.amount);
+    if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      setSellError("Enter a valid total amount.");
+      return;
+    }
+    const quantityValue = Number(sellForm.quantity);
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+      setSellError("Enter a valid quantity.");
+      return;
+    }
+    const priceValue = Number(sellForm.price);
+    if (!Number.isFinite(priceValue) || priceValue <= 0) {
+      setSellError("Enter a valid sell price per share.");
+      return;
+    }
+    if (!sellForm.date) {
+      setSellError("Select a sell date.");
+      return;
+    }
+
+    setSellSaving(true);
+    setSellError("");
+    try {
+      const payload = {
+        account_id: Number(sellForm.account_id),
+        amount: amountValue,
+        currency: sellForm.currency || null,
+        type: "investment",
+        category: sellForm.category || null,
+        date: sellForm.date,
+        notes: sellForm.notes || null,
+        investment_id: Number(sellForm.investment_id),
+        quantity: quantityValue,
+        price: priceValue,
+        investment_type: "sell"
+      };
+      const response = await fetch("/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to save sell transaction.");
+      }
+      await Promise.all([loadPositions(), loadActivity(), loadRealized()]);
+      closeSellModal();
+    } catch (err) {
+      setSellError(err.message);
+    } finally {
+      setSellSaving(false);
+    }
+  };
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -321,6 +647,26 @@ export default function InvestmentsClient() {
   useEffect(() => {
     setActivityPage(1);
   }, [activityInvestmentFilter, activityRowsPerPage]);
+
+  useEffect(() => {
+    loadAccounts();
+    loadCategories();
+  }, []);
+
+  useEffect(() => {
+    if (!sellModalOpen) {
+      return;
+    }
+    if (!sellForm.account_id && accounts.length === 1) {
+      setSellForm((prev) => ({ ...prev, account_id: String(accounts[0].id) }));
+    }
+    if (!sellForm.category) {
+      const investmentCategory = resolveInvestmentCategory();
+      if (investmentCategory) {
+        setSellForm((prev) => ({ ...prev, category: investmentCategory.name }));
+      }
+    }
+  }, [accounts, categories, sellForm.account_id, sellForm.category, sellModalOpen]);
 
   useEffect(() => {
     setActivityPage((prev) => {
@@ -442,12 +788,12 @@ export default function InvestmentsClient() {
                       </TableCell>
                       <TableCell>{position.currency || "-"}</TableCell>
                       <TableCell>
-                        <Button asChild type="button" variant="outline">
-                          <Link
-                            href={`/transactions?investmentId=${position.id}&investmentAction=sell`}
-                          >
-                            Sell
-                          </Link>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => openSellModal(position)}
+                        >
+                          Sell
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -463,6 +809,7 @@ export default function InvestmentsClient() {
           loading={realizedLoading}
           error={realizedError}
           onConvert={handleConvertOpen}
+          onTransactionSelect={handleRealizedTransactionOpen}
           convertDisabled={convertSaving}
           homeCurrency={homeCurrency}
           formatMoney={formatMoney}
@@ -565,7 +912,14 @@ export default function InvestmentsClient() {
               </TableHeader>
               <TableBody>
                 {pagedActivity.map((entry) => (
-                    <TableRow key={entry.id}>
+                    <TableRow
+                      key={entry.id}
+                      onClick={() => handleActivityTransactionOpen(entry)}
+                      onKeyDown={(event) => handleTransactionRowKeyDown(event, entry)}
+                      tabIndex={0}
+                      role="button"
+                      className="cursor-pointer"
+                    >
                       <TableCell>
                         {entry.investment_name}
                         {entry.investment_symbol
@@ -581,12 +935,9 @@ export default function InvestmentsClient() {
                       </TableCell>
                       <TableCell>{entry.date}</TableCell>
                       <TableCell>
-                        <Link
-                          className="text-sm font-medium text-slate-700 hover:text-slate-900"
-                          href={`/transactions?transactionId=${entry.transaction_id}`}
-                        >
-                          View transaction #{entry.transaction_id}
-                        </Link>
+                        <span className="text-sm font-medium text-slate-700">
+                          Transaction #{entry.transaction_id}
+                        </span>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -643,6 +994,166 @@ export default function InvestmentsClient() {
           </form>
         </DialogContent>
       </Dialog>
+      <Dialog
+        open={sellModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeSellModal();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Sell {sellTarget?.name || "investment"}</DialogTitle>
+            <DialogDescription>
+              Record a sell transaction for this holding.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSellSubmit} className="grid gap-3">
+            <label className="text-sm text-slate-600">
+              Account
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="account_id"
+                value={sellForm.account_id}
+                onChange={handleSellChange}
+              >
+                <option value="">Select account</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {accountsError ? (
+              <p className="text-sm text-rose-600">{accountsError}</p>
+            ) : null}
+            <label className="text-sm text-slate-600">
+              Total amount
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="amount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={sellForm.amount}
+                onChange={handleSellChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Currency
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="currency"
+                value={sellForm.currency}
+                onChange={handleSellChange}
+              >
+                {CURRENCY_OPTIONS.map((option) => (
+                  <option key={option.value || "default"} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm text-slate-600">
+              Investment category
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="category"
+                value={sellForm.category}
+                onChange={handleSellChange}
+              >
+                <option value="">Select category</option>
+                {categories
+                  .filter((category) => category.group === "investments")
+                  .map((category) => (
+                    <option key={category.id} value={category.name}>
+                      {category.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            {categoriesError ? (
+              <p className="text-sm text-rose-600">{categoriesError}</p>
+            ) : null}
+            <label className="text-sm text-slate-600">
+              Quantity
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="quantity"
+                type="number"
+                step="0.0001"
+                min="0"
+                value={sellForm.quantity}
+                onChange={handleSellChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Sell price per share
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="price"
+                type="number"
+                step="0.00001"
+                min="0"
+                value={sellForm.price}
+                onChange={handleSellChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Sell date
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="date"
+                type="date"
+                value={sellForm.date}
+                onChange={handleSellChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Notes
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="notes"
+                value={sellForm.notes}
+                onChange={handleSellChange}
+                placeholder="Optional"
+              />
+            </label>
+            {sellError ? (
+              <p className="text-sm text-rose-600">{sellError}</p>
+            ) : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="outline" onClick={closeSellModal}>
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button type="submit" disabled={sellSaving || accounts.length === 0}>
+                {sellSaving ? "Saving..." : "Record sell"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <TransactionDetailModal
+        open={transactionModalOpen}
+        onClose={closeTransactionModal}
+        transactionId={selectedTransactionId}
+        transaction={selectedTransaction}
+        investmentLabel={selectedTransactionInvestment}
+        loading={
+          transactionLookupLoading &&
+          Boolean(selectedTransactionId) &&
+          !transactionLookup?.[selectedTransactionId]
+        }
+        error={transactionLookupError}
+      />
     </div>
   );
 }
