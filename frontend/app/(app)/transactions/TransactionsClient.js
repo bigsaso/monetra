@@ -442,6 +442,43 @@ export default function TransactionsClient() {
   }, [searchParams, rowsPerPage, transactions]);
 
   useEffect(() => {
+    const investmentIdParam = searchParams.get("investmentId");
+    if (!investmentIdParam) {
+      return;
+    }
+    const parsedId = Number(investmentIdParam);
+    if (!Number.isFinite(parsedId)) {
+      return;
+    }
+    const requestedAction = searchParams.get("investmentAction");
+    const normalizedAction =
+      requestedAction && ["buy", "sell"].includes(requestedAction)
+        ? requestedAction
+        : "";
+    const investmentCategory = categories.find(
+      (category) => category.group === "investments"
+    );
+    setForm((prev) => {
+      const next = { ...prev };
+      if (!next.investment_id) {
+        next.investment_id = String(parsedId);
+      }
+      if (normalizedAction && !next.investment_type) {
+        next.investment_type = normalizedAction;
+      }
+      if (investmentCategory) {
+        const currentGroup = categories.find(
+          (category) => category.name === next.category
+        )?.group;
+        if (!next.category || currentGroup !== "investments") {
+          next.category = investmentCategory.name;
+        }
+      }
+      return next;
+    });
+  }, [categories, searchParams]);
+
+  useEffect(() => {
     if (!highlightedTransactionId) {
       return;
     }

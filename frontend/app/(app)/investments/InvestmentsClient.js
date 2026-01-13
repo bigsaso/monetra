@@ -35,14 +35,6 @@ const assetTypeOptions = [
   { value: "other", label: "Other" }
 ];
 
-const formatAssetType = (value) => {
-  if (!value) return "-";
-  return value
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-};
-
 const normalizeCurrencyValue = (value) =>
   String(value || "").trim().toUpperCase();
 
@@ -55,15 +47,33 @@ const isForeignCurrency = (currency, homeCurrency) => {
   return normalizedCurrency !== normalizedHome;
 };
 
+const formatMoney = (value, currency) => {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) {
+    return "-";
+  }
+  const normalizedCurrency = normalizeCurrencyValue(currency);
+  if (!normalizedCurrency) {
+    return amount.toFixed(2);
+  }
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: normalizedCurrency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(amount);
+  } catch (err) {
+    return `${amount.toFixed(2)} ${normalizedCurrency}`;
+  }
+};
+
 export default function InvestmentsClient() {
-  const [investments, setInvestments] = useState([]);
+  const [positions, setPositions] = useState([]);
   const [activity, setActivity] = useState([]);
   const [homeCurrency, setHomeCurrency] = useState("USD");
   const [transactionCurrencyLookup, setTransactionCurrencyLookup] = useState({});
   const [form, setForm] = useState(emptyForm);
-  const [editForm, setEditForm] = useState(emptyForm);
-  const [editingId, setEditingId] = useState(null);
-  const [isEditOpen, setIsEditOpen] = useState(false);
   const [convertTarget, setConvertTarget] = useState(null);
   const [convertDate, setConvertDate] = useState("");
   const [convertError, setConvertError] = useState("");
@@ -94,17 +104,17 @@ export default function InvestmentsClient() {
     []
   );
 
-  const loadInvestments = async () => {
+  const loadPositions = async () => {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/investments");
+      const response = await fetch("/api/investments/positions");
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data?.detail || "Failed to load investments.");
+        throw new Error(data?.detail || "Failed to load investment positions.");
       }
       const data = await response.json();
-      setInvestments(data);
+      setPositions(data);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -171,7 +181,7 @@ export default function InvestmentsClient() {
   };
 
   useEffect(() => {
-    loadInvestments();
+    loadPositions();
     loadActivity();
     loadTransactionCurrencies();
     loadHomeCurrency();
@@ -211,90 +221,7 @@ export default function InvestmentsClient() {
         throw new Error(data?.detail || "Failed to save investment.");
       }
       setForm(emptyForm);
-      await loadInvestments();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleEdit = (investment) => {
-    setEditingId(investment.id);
-    setError("");
-    setEditForm({
-      name: investment.name,
-      symbol: investment.symbol || "",
-      asset_type: investment.asset_type || "stock"
-    });
-    setIsEditOpen(true);
-  };
-
-  const handleEditChange = (event) => {
-    const { name, value } = event.target;
-    setEditForm((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleEditSubmit = async (event) => {
-    event.preventDefault();
-    if (!editForm.name.trim()) {
-      setError("Enter an investment name.");
-      return;
-    }
-    if (!editForm.asset_type) {
-      setError("Select an asset type.");
-      return;
-    }
-
-    setSaving(true);
-    setError("");
-    try {
-      const payload = {
-        name: editForm.name,
-        symbol: editForm.symbol,
-        asset_type: editForm.asset_type
-      };
-      const response = await fetch(`/api/investments/${editingId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data?.detail || "Failed to save investment.");
-      }
-      setEditingId(null);
-      setIsEditOpen(false);
-      await loadInvestments();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleEditCancel = () => {
-    setEditingId(null);
-    setIsEditOpen(false);
-    setEditForm(emptyForm);
-    setError("");
-  };
-
-  const handleDelete = async (investmentId) => {
-    if (!window.confirm("Delete this investment?")) {
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      const response = await fetch(`/api/investments/${investmentId}`, {
-        method: "DELETE"
-      });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data?.detail || "Failed to delete investment.");
-      }
-      await loadInvestments();
+      await loadPositions();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -416,45 +343,54 @@ export default function InvestmentsClient() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Your investments</CardTitle>
-            <CardDescription>Review and update tracked assets.</CardDescription>
+            <CardTitle>Current holdings</CardTitle>
+            <CardDescription>Holdings based on weighted average cost.</CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto md:overflow-visible">
-            {loading ? <p>Loading investments...</p> : null}
+            {loading ? <p>Loading positions...</p> : null}
             {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-            {!loading && investments.length === 0 ? (
-              <p>No investments yet.</p>
+            {!loading && positions.length === 0 ? (
+              <p>No investment positions yet.</p>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Symbol</TableHead>
-                    <TableHead>Asset type</TableHead>
-                    <TableHead>Actions</TableHead>
+                    <TableHead>Investment</TableHead>
+                    <TableHead className="text-right">Shares</TableHead>
+                    <TableHead className="text-right">Avg cost</TableHead>
+                    <TableHead className="text-right">Cost basis</TableHead>
+                    <TableHead>Currency</TableHead>
+                    <TableHead>Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {investments.map((investment) => (
-                    <TableRow key={investment.id}>
-                      <TableCell>{investment.name}</TableCell>
-                      <TableCell>{investment.symbol || "-"}</TableCell>
-                      <TableCell>{formatAssetType(investment.asset_type)}</TableCell>
-                      <TableCell className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => handleEdit(investment)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => handleDelete(investment.id)}
-                          disabled={saving}
-                        >
-                          Delete
+                  {positions.map((position) => (
+                    <TableRow key={position.id}>
+                      <TableCell>
+                        <div className="font-medium text-slate-900">
+                          {position.name}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {position.symbol || "-"}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {quantityFormatter.format(Number(position.total_shares || 0))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatMoney(position.average_cost_per_share, position.currency)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatMoney(position.total_cost_basis, position.currency)}
+                      </TableCell>
+                      <TableCell>{position.currency || "-"}</TableCell>
+                      <TableCell>
+                        <Button asChild type="button" variant="outline">
+                          <Link
+                            href={`/transactions?investmentId=${position.id}&investmentAction=sell`}
+                          >
+                            Sell
+                          </Link>
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -580,69 +516,6 @@ export default function InvestmentsClient() {
               </DialogClose>
               <Button type="submit" disabled={convertSaving}>
                 Convert
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <Dialog
-        open={isEditOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            handleEditCancel();
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-[520px]">
-          <DialogHeader>
-            <DialogTitle>Edit investment</DialogTitle>
-            <DialogDescription>Update the investment details.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleEditSubmit} className="grid gap-4">
-            <label className="text-sm text-slate-600">
-              Name
-              <input
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="name"
-                value={editForm.name}
-                onChange={handleEditChange}
-                required
-              />
-            </label>
-            <label className="text-sm text-slate-600">
-              Symbol
-              <input
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="symbol"
-                value={editForm.symbol}
-                onChange={handleEditChange}
-                placeholder="Optional"
-              />
-            </label>
-            <label className="text-sm text-slate-600">
-              Asset type
-              <select
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="asset_type"
-                value={editForm.asset_type}
-                onChange={handleEditChange}
-              >
-                {assetTypeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button type="button" variant="outline" onClick={handleEditCancel}>
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button type="submit" disabled={saving}>
-                Save changes
               </Button>
             </DialogFooter>
           </form>

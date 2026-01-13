@@ -591,6 +591,16 @@ class InvestmentResponse(BaseModel):
     created_at: datetime | None = None
 
 
+class InvestmentPositionResponse(BaseModel):
+    id: int
+    name: str
+    symbol: str | None = None
+    total_shares: Decimal
+    average_cost_per_share: Decimal
+    total_cost_basis: Decimal
+    currency: str | None = None
+
+
 class InvestmentActivityResponse(BaseModel):
     id: int
     investment_id: int
@@ -1502,6 +1512,60 @@ def list_investments(
             symbol=row["symbol"],
             asset_type=row["asset_type"],
             created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+@app.get("/investments/positions", response_model=list[InvestmentPositionResponse])
+def list_investment_positions(
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[InvestmentPositionResponse]:
+    user_id = get_user_id(x_user_id)
+    currency_subquery = (
+        select(func.coalesce(investment_entries.c.currency, transactions.c.currency))
+        .select_from(
+            investment_entries.join(
+                transactions,
+                (investment_entries.c.transaction_id == transactions.c.id)
+                & (investment_entries.c.user_id == transactions.c.user_id),
+            )
+        )
+        .where(
+            investment_entries.c.user_id == user_id,
+            investment_entries.c.investment_id == investments.c.id,
+        )
+        .order_by(investment_entries.c.date.desc(), investment_entries.c.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    stmt = (
+        select(
+            investments.c.id,
+            investments.c.name,
+            investments.c.symbol,
+            investments.c.total_shares,
+            investments.c.average_cost_per_share,
+            investments.c.total_cost_basis,
+            currency_subquery.label("currency"),
+        )
+        .where(
+            investments.c.user_id == user_id,
+            investments.c.total_shares > 0,
+        )
+        .order_by(investments.c.created_at.desc())
+    )
+    with engine.begin() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [
+        InvestmentPositionResponse(
+            id=row["id"],
+            name=row["name"],
+            symbol=row["symbol"],
+            total_shares=row["total_shares"],
+            average_cost_per_share=row["average_cost_per_share"],
+            total_cost_basis=row["total_cost_basis"],
+            currency=row["currency"],
         )
         for row in rows
     ]
