@@ -1,0 +1,10 @@
+ALTER TABLE investments
+    ADD COLUMN IF NOT EXISTS total_shares NUMERIC(18, 8) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS total_cost_basis NUMERIC(18, 8) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS average_cost_per_share NUMERIC(18, 8) NOT NULL DEFAULT 0;
+
+ALTER TABLE investment_entries
+    ADD COLUMN IF NOT EXISTS price_per_share NUMERIC(12, 5),
+    ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12, 2),
+    ADD COLUMN IF NOT EXISTS currency VARCHAR(3),
+    ADD COLUMN IF NOT EXISTS realized_profit_loss NUMERIC(12, 2);

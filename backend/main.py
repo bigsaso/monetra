@@ -171,6 +171,9 @@ investments = Table(
     Column("name", String(255), nullable=False),
     Column("symbol", String(50)),
     Column("asset_type", String(50), nullable=False),
+    Column("total_shares", Numeric(18, 8), nullable=False, server_default="0"),
+    Column("total_cost_basis", Numeric(18, 8), nullable=False, server_default="0"),
+    Column("average_cost_per_share", Numeric(18, 8), nullable=False, server_default="0"),
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
 )
 
@@ -183,6 +186,10 @@ investment_entries = Table(
     Column("transaction_id", Integer, ForeignKey("transactions.id"), nullable=False),
     Column("quantity", Numeric(18, 8), nullable=False),
     Column("price", Numeric(12, 5), nullable=False),
+    Column("price_per_share", Numeric(12, 5)),
+    Column("total_amount", Numeric(12, 2)),
+    Column("currency", String(3)),
+    Column("realized_profit_loss", Numeric(12, 2)),
     Column("type", String(10), nullable=False),
     Column("date", Date, nullable=False),
 )
@@ -593,6 +600,10 @@ class InvestmentActivityResponse(BaseModel):
     type: str
     quantity: Decimal
     price: Decimal
+    price_per_share: Decimal | None = None
+    total_amount: Decimal | None = None
+    currency: str | None = None
+    realized_profit_loss: Decimal | None = None
     date: date
 
 
@@ -753,7 +764,106 @@ def extract_investment_entry(payload: TransactionPayload) -> dict | None:
         "quantity": payload.quantity,
         "price": payload.price,
         "type": investment_type,
+        "total_amount": payload.amount,
     }
+
+
+def recalculate_investment_position(conn, user_id: int, investment_id: int) -> None:
+    stmt = (
+        select(
+            investment_entries.c.id,
+            investment_entries.c.quantity,
+            investment_entries.c.price,
+            investment_entries.c.price_per_share,
+            investment_entries.c.total_amount,
+            investment_entries.c.currency,
+            investment_entries.c.type,
+            transactions.c.amount.label("transaction_amount"),
+            transactions.c.currency.label("transaction_currency"),
+        )
+        .select_from(
+            investment_entries.join(
+                transactions,
+                (investment_entries.c.transaction_id == transactions.c.id)
+                & (investment_entries.c.user_id == transactions.c.user_id),
+            )
+        )
+        .where(
+            investment_entries.c.user_id == user_id,
+            investment_entries.c.investment_id == investment_id,
+        )
+        .order_by(investment_entries.c.date.asc(), investment_entries.c.id.asc())
+    )
+    entries = conn.execute(stmt).mappings().all()
+
+    total_shares = Decimal("0")
+    total_cost_basis = Decimal("0")
+    average_cost_per_share = Decimal("0")
+    entry_updates: list[dict] = []
+
+    for entry in entries:
+        quantity = entry["quantity"]
+        price_per_share = entry["price_per_share"] or entry["price"]
+        total_amount = entry["total_amount"]
+        if total_amount is None:
+            total_amount = entry["transaction_amount"]
+        if total_amount is None and price_per_share is not None:
+            total_amount = (quantity * price_per_share).quantize(Decimal("0.01"))
+        if price_per_share is None or total_amount is None:
+            raise ValueError("Investment transactions require price_per_share and total_amount.")
+
+        entry_type = entry["type"]
+        realized_profit_loss = None
+        if entry_type == "buy":
+            total_shares += quantity
+            total_cost_basis += total_amount
+            if total_shares > 0:
+                average_cost_per_share = total_cost_basis / total_shares
+        elif entry_type == "sell":
+            if quantity > total_shares:
+                raise ValueError("Sell quantity exceeds available shares.")
+            cost_basis = average_cost_per_share * quantity
+            realized_profit_loss = total_amount - cost_basis
+            total_shares -= quantity
+            total_cost_basis -= cost_basis
+            if total_shares > 0:
+                average_cost_per_share = total_cost_basis / total_shares
+            else:
+                total_cost_basis = Decimal("0")
+                average_cost_per_share = Decimal("0")
+        else:
+            raise ValueError("Investment type must be 'buy' or 'sell'.")
+
+        update_values = {}
+        if entry["price_per_share"] is None:
+            update_values["price_per_share"] = price_per_share
+        if entry["total_amount"] is None:
+            update_values["total_amount"] = total_amount
+        if entry["currency"] is None and entry["transaction_currency"] is not None:
+            update_values["currency"] = entry["transaction_currency"]
+        if entry_type == "sell":
+            update_values["realized_profit_loss"] = realized_profit_loss
+        if update_values:
+            update_values["id"] = entry["id"]
+            entry_updates.append(update_values)
+
+    conn.execute(
+        update(investments)
+        .where(investments.c.id == investment_id, investments.c.user_id == user_id)
+        .values(
+            total_shares=total_shares,
+            total_cost_basis=total_cost_basis,
+            average_cost_per_share=average_cost_per_share,
+        )
+    )
+
+    for entry_update in entry_updates:
+        entry_id = entry_update.pop("id")
+        conn.execute(
+            update(investment_entries)
+            .where(investment_entries.c.id == entry_id)
+            .values(**entry_update)
+        )
 
 
 def get_period_range(period: str, today: date) -> tuple[date, date]:
@@ -1413,6 +1523,12 @@ def list_investment_activity(
             investment_entries.c.transaction_id,
             investment_entries.c.quantity,
             investment_entries.c.price,
+            investment_entries.c.price_per_share,
+            investment_entries.c.total_amount,
+            investment_entries.c.currency,
+            investment_entries.c.realized_profit_loss,
+            transactions.c.amount.label("transaction_amount"),
+            transactions.c.currency.label("transaction_currency"),
             investment_entries.c.type,
             investment_entries.c.date,
             investments.c.name.label("investment_name"),
@@ -1421,6 +1537,10 @@ def list_investment_activity(
         .select_from(
             investment_entries.join(
                 investments, investment_entries.c.investment_id == investments.c.id
+            ).join(
+                transactions,
+                (investment_entries.c.transaction_id == transactions.c.id)
+                & (investment_entries.c.user_id == transactions.c.user_id),
             )
         )
         .where(*conditions)
@@ -1438,6 +1558,10 @@ def list_investment_activity(
             type=row["type"],
             quantity=row["quantity"],
             price=row["price"],
+            price_per_share=row["price_per_share"] or row["price"],
+            total_amount=row["total_amount"] or row["transaction_amount"],
+            currency=row["currency"] or row["transaction_currency"],
+            realized_profit_loss=row["realized_profit_loss"],
             date=row["date"],
         )
         for row in rows
@@ -1990,10 +2114,17 @@ def create_transaction(
                     transaction_id=row["id"],
                     quantity=investment_entry["quantity"],
                     price=investment_entry["price"],
+                    price_per_share=investment_entry["price"],
+                    total_amount=investment_entry["total_amount"],
+                    currency=resolved_currency,
                     type=investment_entry["type"],
                     date=payload.date,
                 )
             )
+            try:
+                recalculate_investment_position(conn, user_id, investment_entry["investment_id"])
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not row:
         raise HTTPException(status_code=500, detail="Failed to create transaction.")
@@ -2032,6 +2163,14 @@ def update_transaction(
         ).first()
         if not account_exists:
             raise HTTPException(status_code=404, detail="Account not found.")
+        existing_investment_entry = conn.execute(
+            select(investment_entries.c.id).where(
+                investment_entries.c.transaction_id == transaction_id,
+                investment_entries.c.user_id == user_id,
+            )
+        ).first()
+        if existing_investment_entry:
+            raise HTTPException(status_code=400, detail="Investment transactions cannot be updated.")
         category_group = get_category_group(conn, user_id, payload.category)
         existing_currency = None
         if payload.currency is None:
@@ -2110,6 +2249,9 @@ def update_transaction(
                         investment_id=investment_entry["investment_id"],
                         quantity=investment_entry["quantity"],
                         price=investment_entry["price"],
+                        price_per_share=investment_entry["price"],
+                        total_amount=investment_entry["total_amount"],
+                        currency=resolved_currency,
                         type=investment_entry["type"],
                         date=payload.date,
                     )
@@ -2122,10 +2264,17 @@ def update_transaction(
                         transaction_id=transaction_id,
                         quantity=investment_entry["quantity"],
                         price=investment_entry["price"],
+                        price_per_share=investment_entry["price"],
+                        total_amount=investment_entry["total_amount"],
+                        currency=resolved_currency,
                         type=investment_entry["type"],
                         date=payload.date,
                     )
                 )
+            try:
+                recalculate_investment_position(conn, user_id, investment_entry["investment_id"])
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not row:
         raise HTTPException(status_code=404, detail="Transaction not found.")
@@ -2151,8 +2300,16 @@ def delete_transaction(
     transaction_id: int, x_user_id: str | None = Header(None, alias="x-user-id")
 ) -> dict:
     user_id = get_user_id(x_user_id)
-    stmt = transactions.delete().where(transactions.c.id == transaction_id, transactions.c.user_id == user_id)
     with engine.begin() as conn:
+        investment_entry = conn.execute(
+            select(investment_entries.c.id).where(
+                investment_entries.c.transaction_id == transaction_id,
+                investment_entries.c.user_id == user_id,
+            )
+        ).first()
+        if investment_entry:
+            raise HTTPException(status_code=400, detail="Investment transactions cannot be deleted.")
+        stmt = transactions.delete().where(transactions.c.id == transaction_id, transactions.c.user_id == user_id)
         result = conn.execute(stmt)
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Transaction not found.")
