@@ -28,7 +28,12 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.budget_engine import BudgetRule, Transaction, evaluate_budget
 from backend.csv_parser import CSVParseResult, ParsedTransaction, parse_transactions_csv
-from backend.currency_conversion import StaticRateProvider, convert_amount
+from backend.currency_conversion import (
+    CompositeRateProvider,
+    FrankfurterRateProvider,
+    StaticRateProvider,
+    convert_amount,
+)
 from backend.income_projection import IncomeTransaction, RecurringSchedule, project_income
 from backend.recurring_projection import ActualTransaction, project_recurring_schedule
 
@@ -67,7 +72,10 @@ def get_system_default_currency() -> str:
 
 
 SYSTEM_DEFAULT_CURRENCY = get_system_default_currency()
-FX_PROVIDER = StaticRateProvider()
+FX_PROVIDER = CompositeRateProvider(
+    primary=FrankfurterRateProvider(),
+    fallback=StaticRateProvider(),
+)
 
 DEFAULT_CATEGORIES = [
     "Groceries",
