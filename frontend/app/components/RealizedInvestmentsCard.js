@@ -79,8 +79,11 @@ export default function RealizedInvestmentsCard({
             <TableBody>
               {realized.map((entry) => {
                 const isConverted = Boolean(entry.converted_at);
+                const isSell =
+                  !entry.type || String(entry.type).toLowerCase() === "sell";
+                const isEspp = entry.espp_period_id != null;
                 const showConvert =
-                  isForeignCurrency(entry.currency, homeCurrency) || isConverted;
+                  (isForeignCurrency(entry.currency, homeCurrency) || isConverted) && isSell;
                 const tooltip = isConverted ? "Already converted to home currency." : "";
                 const convertButton = (
                   <Button
@@ -107,8 +110,13 @@ export default function RealizedInvestmentsCard({
                     className={onTransactionSelect ? "cursor-pointer" : undefined}
                   >
                     <TableCell>
-                      <div className="font-medium text-slate-900">
-                        {entry.investment_name}
+                      <div className="flex flex-wrap items-center gap-2 font-medium text-slate-900">
+                        <span>{entry.investment_name}</span>
+                        {isEspp ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+                            ESPP
+                          </span>
+                        ) : null}
                       </div>
                       <div className="text-xs text-slate-500">
                         {entry.investment_symbol || "-"}

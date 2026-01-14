@@ -667,6 +667,7 @@ class InvestmentPositionResponse(BaseModel):
     average_cost_per_share: Decimal
     total_cost_basis: Decimal
     currency: str | None = None
+    source: str | None = None
 
 
 class InvestmentActivityResponse(BaseModel):
@@ -690,6 +691,7 @@ class InvestmentRealizedResponse(BaseModel):
     investment_id: int
     investment_name: str
     investment_symbol: str | None = None
+    type: str
     quantity_sold: Decimal
     average_buy_price: Decimal | None = None
     sell_price_per_share: Decimal | None = None
@@ -698,6 +700,7 @@ class InvestmentRealizedResponse(BaseModel):
     currency: str | None = None
     sell_date: date
     converted_at: date | None = None
+    espp_period_id: int | None = None
 
 
 class EsppPeriodPayload(BaseModel):
@@ -1919,6 +1922,16 @@ def list_investment_positions(
         .limit(1)
         .scalar_subquery()
     )
+    source_subquery = (
+        select(investment_entries.c.source)
+        .where(
+            investment_entries.c.user_id == user_id,
+            investment_entries.c.investment_id == investments.c.id,
+        )
+        .order_by(investment_entries.c.date.desc(), investment_entries.c.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
     stmt = (
         select(
             investments.c.id,
@@ -1928,6 +1941,7 @@ def list_investment_positions(
             investments.c.average_cost_per_share,
             investments.c.total_cost_basis,
             currency_subquery.label("currency"),
+            source_subquery.label("source"),
         )
         .where(
             investments.c.user_id == user_id,
@@ -1946,6 +1960,7 @@ def list_investment_positions(
             average_cost_per_share=row["average_cost_per_share"],
             total_cost_basis=row["total_cost_basis"],
             currency=row["currency"],
+            source=row["source"],
         )
         for row in rows
     ]
@@ -2025,6 +2040,7 @@ def list_realized_investments(
         select(
             investment_entries.c.id,
             investment_entries.c.investment_id,
+            investment_entries.c.type,
             investment_entries.c.quantity,
             investment_entries.c.price,
             investment_entries.c.price_per_share,
@@ -2032,6 +2048,7 @@ def list_realized_investments(
             investment_entries.c.currency,
             investment_entries.c.cost_of_sold_shares,
             investment_entries.c.realized_profit_loss,
+            investment_entries.c.espp_period_id,
             investment_entries.c.date,
             transactions.c.amount.label("transaction_amount"),
             transactions.c.currency.label("transaction_currency"),
@@ -2070,6 +2087,7 @@ def list_realized_investments(
                 investment_id=row["investment_id"],
                 investment_name=row["investment_name"],
                 investment_symbol=row["investment_symbol"],
+                type=row["type"],
                 quantity_sold=quantity,
                 average_buy_price=average_buy_price,
                 sell_price_per_share=row["price_per_share"] or row["price"],
@@ -2078,6 +2096,7 @@ def list_realized_investments(
                 currency=row["currency"] or row["transaction_currency"],
                 sell_date=row["date"],
                 converted_at=row["converted_at"],
+                espp_period_id=row["espp_period_id"],
             )
         )
     return responses
@@ -3835,11 +3854,6 @@ def convert_to_home_currency(
                 raise HTTPException(
                     status_code=400,
                     detail="Investment buy transactions cannot be converted.",
-                )
-            if investment_entry.get("source") == "espp":
-                raise HTTPException(
-                    status_code=400,
-                    detail="ESPP sell transactions cannot be converted.",
                 )
         elif txn_row["type"] == "investment":
             raise HTTPException(status_code=400, detail="Investment transactions cannot be converted.")

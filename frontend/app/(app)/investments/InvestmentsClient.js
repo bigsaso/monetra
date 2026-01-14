@@ -1912,6 +1912,83 @@ export default function InvestmentsClient({ view = "investments" }) {
         {isEsppView ? (
           <>
             <Card>
+              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle>ESPP holdings</CardTitle>
+                  <CardDescription>
+                    Sell shares from a specific ESPP batch.
+                  </CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => openEsppSellModal(esppBatches[0])}
+                  disabled={esppBatches.length === 0}
+                >
+                  Sell ESPP Shares
+                </Button>
+              </CardHeader>
+              <CardContent className="overflow-x-auto md:overflow-visible">
+                {esppBatchesLoading ? (
+                  <p>Loading ESPP batches...</p>
+                ) : null}
+                {esppBatchesError ? (
+                  <p className="text-sm text-rose-600">{esppBatchesError}</p>
+                ) : null}
+                {!esppBatchesLoading && esppBatches.length === 0 ? (
+                  <p>No ESPP shares available to sell yet.</p>
+                ) : null}
+                {!esppBatchesLoading && esppBatches.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Period</TableHead>
+                        <TableHead>Purchase date</TableHead>
+                        <TableHead className="text-right">Shares available</TableHead>
+                        <TableHead className="text-right">Cost per share</TableHead>
+                        <TableHead>Action</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {esppBatches.map((batch) => (
+                        <TableRow key={batch.period_id}>
+                          <TableCell>
+                            <div className="font-medium text-slate-900">
+                              {batch.period_name}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {batch.stock_ticker} ({batch.stock_currency})
+                            </div>
+                          </TableCell>
+                          <TableCell>{formatShortDate(batch.purchase_date)}</TableCell>
+                          <TableCell className="text-right">
+                            {quantityFormatter.format(
+                              Number(batch.shares_available || 0)
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatPrice(
+                              batch.purchase_price,
+                              batch.stock_currency
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => openEsppSellModal(batch)}
+                            >
+                              Sell ESPP Shares
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : null}
+              </CardContent>
+            </Card>
+            <Card>
               <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <CardTitle>ESPP periods</CardTitle>
@@ -2426,83 +2503,6 @@ export default function InvestmentsClient({ view = "investments" }) {
                 )}
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <CardTitle>ESPP holdings</CardTitle>
-                  <CardDescription>
-                    Sell shares from a specific ESPP batch.
-                  </CardDescription>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => openEsppSellModal(esppBatches[0])}
-                  disabled={esppBatches.length === 0}
-                >
-                  Sell ESPP Shares
-                </Button>
-              </CardHeader>
-              <CardContent className="overflow-x-auto md:overflow-visible">
-                {esppBatchesLoading ? (
-                  <p>Loading ESPP batches...</p>
-                ) : null}
-                {esppBatchesError ? (
-                  <p className="text-sm text-rose-600">{esppBatchesError}</p>
-                ) : null}
-                {!esppBatchesLoading && esppBatches.length === 0 ? (
-                  <p>No ESPP shares available to sell yet.</p>
-                ) : null}
-                {!esppBatchesLoading && esppBatches.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Period</TableHead>
-                        <TableHead>Purchase date</TableHead>
-                        <TableHead className="text-right">Shares available</TableHead>
-                        <TableHead className="text-right">Cost per share</TableHead>
-                        <TableHead>Action</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {esppBatches.map((batch) => (
-                        <TableRow key={batch.period_id}>
-                          <TableCell>
-                            <div className="font-medium text-slate-900">
-                              {batch.period_name}
-                            </div>
-                            <div className="text-xs text-slate-500">
-                              {batch.stock_ticker} ({batch.stock_currency})
-                            </div>
-                          </TableCell>
-                          <TableCell>{formatShortDate(batch.purchase_date)}</TableCell>
-                          <TableCell className="text-right">
-                            {quantityFormatter.format(
-                              Number(batch.shares_available || 0)
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatPrice(
-                              batch.purchase_price,
-                              batch.stock_currency
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => openEsppSellModal(batch)}
-                            >
-                              Sell ESPP Shares
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                ) : null}
-              </CardContent>
-            </Card>
           </>
         ) : null}
 
@@ -2556,13 +2556,24 @@ export default function InvestmentsClient({ view = "investments" }) {
                         </TableCell>
                         <TableCell>{position.currency || "-"}</TableCell>
                         <TableCell>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => openSellModal(position)}
-                          >
-                            Sell
-                          </Button>
+                          {String(position.source || "").toLowerCase() === "espp" ? (
+                            <Button asChild type="button" variant="outline">
+                              <Link href="/espp">View</Link>
+                            </Button>
+                          ) : String(position.source || "").toLowerCase() ===
+                            "rsu" ? (
+                            <Button asChild type="button" variant="outline">
+                              <Link href="/rsu">View</Link>
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => openSellModal(position)}
+                            >
+                              Sell
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
