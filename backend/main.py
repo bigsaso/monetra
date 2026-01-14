@@ -19,6 +19,7 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
     and_,
+    or_,
     create_engine,
     func,
     insert,
@@ -191,6 +192,8 @@ investment_entries = Table(
     Column("currency", String(3)),
     Column("cost_of_sold_shares", Numeric(12, 2)),
     Column("realized_profit_loss", Numeric(12, 2)),
+    Column("source", String(10), nullable=False, server_default="regular"),
+    Column("espp_period_id", Integer, ForeignKey("espp_periods.id")),
     Column("type", String(10), nullable=False),
     Column("date", Date, nullable=False),
 )
@@ -1136,6 +1139,7 @@ def recalculate_investment_position(conn, user_id: int, investment_id: int) -> N
         .where(
             investment_entries.c.user_id == user_id,
             investment_entries.c.investment_id == investment_id,
+            or_(investment_entries.c.source == "regular", investment_entries.c.source.is_(None)),
         )
         .order_by(investment_entries.c.date.asc(), investment_entries.c.id.asc())
     )
@@ -2454,6 +2458,8 @@ def close_espp_period(
                 price_per_share=summary.close_fmv,
                 total_amount=total_amount,
                 currency=period_row["stock_currency"],
+                source="espp",
+                espp_period_id=period_id,
                 type="buy",
                 date=last_deposit_date,
             )
@@ -3293,6 +3299,7 @@ def create_transaction(
                     price_per_share=investment_entry["price"],
                     total_amount=investment_entry["total_amount"],
                     currency=resolved_currency,
+                    source="regular",
                     type=investment_entry["type"],
                     date=payload.date,
                 )
@@ -3428,6 +3435,8 @@ def update_transaction(
                         price_per_share=investment_entry["price"],
                         total_amount=investment_entry["total_amount"],
                         currency=resolved_currency,
+                        source="regular",
+                        espp_period_id=None,
                         type=investment_entry["type"],
                         date=payload.date,
                     )
@@ -3443,6 +3452,7 @@ def update_transaction(
                         price_per_share=investment_entry["price"],
                         total_amount=investment_entry["total_amount"],
                         currency=resolved_currency,
+                        source="regular",
                         type=investment_entry["type"],
                         date=payload.date,
                     )
