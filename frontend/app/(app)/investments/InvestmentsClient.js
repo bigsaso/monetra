@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import {
@@ -71,6 +71,44 @@ const formatMoney = (value, currency) => {
   }
 };
 
+const parseDateValue = (value) => {
+  if (!value) {
+    return null;
+  }
+  return new Date(`${value}T00:00:00`);
+};
+
+const formatDateInput = (dateValue) => {
+  const year = dateValue.getFullYear();
+  const month = String(dateValue.getMonth() + 1).padStart(2, "0");
+  const day = String(dateValue.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const formatShortDate = (value) => {
+  const parsed = parseDateValue(value);
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    return value || "-";
+  }
+  return parsed.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+};
+
+const buildEsppSchedule = (startDate) => {
+  const base = parseDateValue(startDate);
+  if (!base || Number.isNaN(base.getTime())) {
+    return [];
+  }
+  return Array.from({ length: 13 }, (_, index) => {
+    const next = new Date(base);
+    next.setDate(base.getDate() + index * 14);
+    return formatDateInput(next);
+  });
+};
+
 const buildEmptySellForm = (dateValue) => ({
   account_id: "",
   amount: "",
@@ -89,6 +127,23 @@ export default function InvestmentsClient() {
   const [positions, setPositions] = useState([]);
   const [activity, setActivity] = useState([]);
   const [homeCurrency, setHomeCurrency] = useState("USD");
+  const [esppPeriods, setEsppPeriods] = useState([]);
+  const [esppPeriodsLoading, setEsppPeriodsLoading] = useState(true);
+  const [esppPeriodsError, setEsppPeriodsError] = useState("");
+  const [selectedEsppPeriodId, setSelectedEsppPeriodId] = useState("");
+  const [esppDeposits, setEsppDeposits] = useState([]);
+  const [esppDepositsLoading, setEsppDepositsLoading] = useState(false);
+  const [esppDepositsError, setEsppDepositsError] = useState("");
+  const [esppModalOpen, setEsppModalOpen] = useState(false);
+  const [esppForm, setEsppForm] = useState({
+    name: "",
+    start_date: "",
+    stock_ticker: "",
+    stock_currency: "USD"
+  });
+  const [esppFormError, setEsppFormError] = useState("");
+  const [esppSaving, setEsppSaving] = useState(false);
+  const [esppDepositSaving, setEsppDepositSaving] = useState({});
   const [form, setForm] = useState(emptyForm);
   const [realized, setRealized] = useState([]);
   const [realizedLoading, setRealizedLoading] = useState(true);
@@ -122,6 +177,7 @@ export default function InvestmentsClient() {
   const [selectedTransactionFallback, setSelectedTransactionFallback] = useState(null);
   const [selectedTransactionInvestment, setSelectedTransactionInvestment] = useState("");
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const esppSaveTimers = useRef({});
 
   const currencyFormatter = useMemo(
     () =>
@@ -162,6 +218,40 @@ export default function InvestmentsClient() {
       a.name.localeCompare(b.name)
     );
   }, [activity]);
+
+  const selectedEsppPeriod = useMemo(
+    () =>
+      esppPeriods.find(
+        (period) => String(period.id) === String(selectedEsppPeriodId)
+      ),
+    [esppPeriods, selectedEsppPeriodId]
+  );
+
+  const esppSchedule = useMemo(
+    () => buildEsppSchedule(selectedEsppPeriod?.start_date),
+    [selectedEsppPeriod?.start_date]
+  );
+
+  const esppDepositRows = useMemo(() => {
+    if (!selectedEsppPeriod) {
+      return [];
+    }
+    const lookup = new Map(
+      esppDeposits.map((deposit) => [deposit.date, deposit])
+    );
+    return esppSchedule.map((dateValue) => {
+      const match = lookup.get(dateValue);
+      if (match) {
+        return match;
+      }
+      return {
+        id: null,
+        date: dateValue,
+        amount_home_currency: "",
+        amount_input: ""
+      };
+    });
+  }, [esppDeposits, esppSchedule, selectedEsppPeriod]);
 
   const filteredActivity = useMemo(() => {
     if (activityInvestmentFilter === "all") {
@@ -284,12 +374,96 @@ export default function InvestmentsClient() {
     }
   };
 
+  const buildEsppFormDefaults = (currency, startDate) => ({
+    name: "",
+    start_date: startDate || today,
+    stock_ticker: "",
+    stock_currency: currency || "USD"
+  });
+
+  const loadEsppPeriods = async (preferredPeriodId = "") => {
+    setEsppPeriodsLoading(true);
+    setEsppPeriodsError("");
+    try {
+      const response = await fetch("/api/espp-periods");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load ESPP periods.");
+      }
+      const data = await response.json();
+      setEsppPeriods(data);
+      const candidateId = preferredPeriodId || selectedEsppPeriodId;
+      const hasCandidate = data.some(
+        (period) => String(period.id) === String(candidateId)
+      );
+      const nextId = hasCandidate
+        ? String(candidateId)
+        : data.length > 0
+          ? String(data[0].id)
+          : "";
+      setSelectedEsppPeriodId(nextId);
+    } catch (err) {
+      setEsppPeriodsError(err.message);
+    } finally {
+      setEsppPeriodsLoading(false);
+    }
+  };
+
+  const loadEsppDeposits = async (periodId) => {
+    if (!periodId) {
+      setEsppDeposits([]);
+      return;
+    }
+    setEsppDepositsLoading(true);
+    setEsppDepositsError("");
+    try {
+      const response = await fetch(`/api/espp-periods/${periodId}/deposits`);
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load ESPP deposits.");
+      }
+      const data = await response.json();
+      setEsppDeposits(
+        data.map((deposit) => ({
+          ...deposit,
+          amount_input:
+            deposit.amount_home_currency === null ||
+            deposit.amount_home_currency === undefined
+              ? ""
+              : String(deposit.amount_home_currency)
+        }))
+      );
+    } catch (err) {
+      setEsppDepositsError(err.message);
+    } finally {
+      setEsppDepositsLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadPositions();
     loadActivity();
     loadRealized();
     loadHomeCurrency();
+    loadEsppPeriods();
   }, []);
+
+  useEffect(() => {
+    if (!selectedEsppPeriodId) {
+      setEsppDeposits([]);
+      return;
+    }
+    loadEsppDeposits(selectedEsppPeriodId);
+  }, [selectedEsppPeriodId]);
+
+  useEffect(
+    () => () => {
+      Object.values(esppSaveTimers.current).forEach((timer) =>
+        clearTimeout(timer)
+      );
+    },
+    []
+  );
 
   const loadTransactionsLookup = async () => {
     if (transactionLookupLoading || transactionLookup !== null) {
@@ -314,6 +488,122 @@ export default function InvestmentsClient() {
     } finally {
       setTransactionLookupLoading(false);
     }
+  };
+
+  const openEsppModal = () => {
+    setEsppForm(buildEsppFormDefaults(homeCurrency, today));
+    setEsppFormError("");
+    setEsppModalOpen(true);
+  };
+
+  const handleEsppFormChange = (event) => {
+    const { name, value } = event.target;
+    setEsppForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleEsppCreate = async (event) => {
+    event.preventDefault();
+    const name = esppForm.name.trim();
+    const startDate = esppForm.start_date;
+    const stockTicker = esppForm.stock_ticker.trim().toUpperCase();
+    const stockCurrency = esppForm.stock_currency.trim().toUpperCase();
+    if (!name) {
+      setEsppFormError("Enter a period name.");
+      return;
+    }
+    if (!startDate) {
+      setEsppFormError("Select a start date.");
+      return;
+    }
+    if (!stockTicker) {
+      setEsppFormError("Enter a stock ticker.");
+      return;
+    }
+    if (!stockCurrency) {
+      setEsppFormError("Select a stock currency.");
+      return;
+    }
+    setEsppSaving(true);
+    setEsppFormError("");
+    try {
+      const response = await fetch("/api/espp-periods", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          start_date: startDate,
+          stock_ticker: stockTicker,
+          stock_currency: stockCurrency
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to create ESPP period.");
+      }
+      setEsppModalOpen(false);
+      await loadEsppPeriods(String(data.id));
+    } catch (err) {
+      setEsppFormError(err.message);
+    } finally {
+      setEsppSaving(false);
+    }
+  };
+
+  const saveEsppDeposit = async (depositId, dateValue, amountValue) => {
+    setEsppDepositSaving((prev) => ({ ...prev, [depositId]: true }));
+    setEsppDepositsError("");
+    try {
+      const response = await fetch(`/api/espp-deposits/${depositId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: dateValue,
+          amount_home_currency: amountValue
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to update ESPP deposit.");
+      }
+      setEsppDeposits((prev) =>
+        prev.map((deposit) =>
+          deposit.id === depositId
+            ? {
+                ...deposit,
+                amount_home_currency: data.amount_home_currency,
+                amount_input: String(data.amount_home_currency ?? "")
+              }
+            : deposit
+        )
+      );
+    } catch (err) {
+      setEsppDepositsError(err.message);
+    } finally {
+      setEsppDepositSaving((prev) => {
+        const next = { ...prev };
+        delete next[depositId];
+        return next;
+      });
+    }
+  };
+
+  const handleEsppDepositChange = (depositId, dateValue, value) => {
+    setEsppDeposits((prev) =>
+      prev.map((deposit) =>
+        deposit.id === depositId ? { ...deposit, amount_input: value } : deposit
+      )
+    );
+    const normalizedAmount = value === "" ? "0" : value;
+    const numericValue = Number(normalizedAmount);
+    if (!Number.isFinite(numericValue) || numericValue < 0) {
+      return;
+    }
+    if (esppSaveTimers.current[depositId]) {
+      clearTimeout(esppSaveTimers.current[depositId]);
+    }
+    esppSaveTimers.current[depositId] = setTimeout(() => {
+      saveEsppDeposit(depositId, dateValue, normalizedAmount);
+    }, 500);
   };
 
   const buildInvestmentLabel = (name, symbol) => {
@@ -745,6 +1035,110 @@ export default function InvestmentsClient() {
         </Card>
 
         <Card>
+          <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle>ESPP periods</CardTitle>
+              <CardDescription>
+                Track the 13 biweekly contributions for each offering.
+              </CardDescription>
+            </div>
+            <Button type="button" variant="outline" onClick={openEsppModal}>
+              Start new ESPP period
+            </Button>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            {esppPeriodsLoading ? <p>Loading ESPP periods...</p> : null}
+            {esppPeriodsError ? (
+              <p className="text-sm text-rose-600">{esppPeriodsError}</p>
+            ) : null}
+            {!esppPeriodsLoading && esppPeriods.length === 0 ? (
+              <p>No ESPP periods yet.</p>
+            ) : null}
+            {!esppPeriodsLoading && esppPeriods.length > 0 ? (
+              <>
+                <div className="flex flex-wrap items-end gap-4 text-sm text-slate-600">
+                  <label className="min-w-[220px]">
+                    Period
+                    <select
+                      className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                      value={selectedEsppPeriodId}
+                      onChange={(event) =>
+                        setSelectedEsppPeriodId(event.target.value)
+                      }
+                    >
+                      {esppPeriods.map((period) => (
+                        <option key={period.id} value={period.id}>
+                          {period.name} • {formatShortDate(period.start_date)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedEsppPeriod ? (
+                    <div className="text-sm text-slate-500">
+                      {selectedEsppPeriod.stock_ticker} (
+                      {selectedEsppPeriod.stock_currency})
+                    </div>
+                  ) : null}
+                </div>
+                {esppDepositsLoading ? <p>Loading deposits...</p> : null}
+                {esppDepositsError ? (
+                  <p className="text-sm text-rose-600">{esppDepositsError}</p>
+                ) : null}
+                {!esppDepositsLoading && selectedEsppPeriod ? (
+                  <div className="overflow-x-auto rounded-md border border-slate-200">
+                    <div className="border-b border-slate-200 px-4 py-3 text-sm text-slate-500">
+                      13 biweekly deposits starting{" "}
+                      {formatShortDate(selectedEsppPeriod.start_date)}.
+                    </div>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Saved amount ({homeCurrency})</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {esppDepositRows.map((deposit) => (
+                          <TableRow key={`${deposit.date}-${deposit.id || "new"}`}>
+                            <TableCell>{formatShortDate(deposit.date)}</TableCell>
+                            <TableCell className="min-w-[200px]">
+                              <div className="flex flex-col gap-1">
+                                <input
+                                  className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={deposit.amount_input}
+                                  onChange={(event) =>
+                                    deposit.id
+                                      ? handleEsppDepositChange(
+                                          deposit.id,
+                                          deposit.date,
+                                          event.target.value
+                                        )
+                                      : null
+                                  }
+                                  disabled={!deposit.id}
+                                />
+                                {deposit.id && esppDepositSaving[deposit.id] ? (
+                                  <span className="text-xs text-slate-400">
+                                    Saving...
+                                  </span>
+                                ) : null}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card>
           <CardHeader>
             <CardTitle>Current holdings</CardTitle>
             <CardDescription>Holdings based on weighted average cost.</CardDescription>
@@ -947,6 +1341,90 @@ export default function InvestmentsClient() {
           </CardContent>
         </Card>
       </div>
+      <Dialog
+        open={esppModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEsppModalOpen(false);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Start a new ESPP period</DialogTitle>
+            <DialogDescription>
+              Capture the basics to create 13 biweekly deposit slots.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleEsppCreate} className="grid gap-3">
+            <label className="text-sm text-slate-600">
+              Period name
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="name"
+                value={esppForm.name}
+                onChange={handleEsppFormChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Start date
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="start_date"
+                type="date"
+                value={esppForm.start_date}
+                onChange={handleEsppFormChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Stock ticker
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="stock_ticker"
+                value={esppForm.stock_ticker}
+                onChange={handleEsppFormChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Stock currency
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="stock_currency"
+                value={esppForm.stock_currency}
+                onChange={handleEsppFormChange}
+                required
+              >
+                {CURRENCY_OPTIONS.filter((option) => option.value).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {esppFormError ? (
+              <p className="text-sm text-rose-600">{esppFormError}</p>
+            ) : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEsppModalOpen(false)}
+                  disabled={esppSaving}
+                >
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button type="submit" disabled={esppSaving}>
+                Create period
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={Boolean(convertTarget)}
         onOpenChange={(open) => {

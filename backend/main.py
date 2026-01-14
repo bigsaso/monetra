@@ -726,8 +726,8 @@ class EsppDepositPayload(BaseModel):
 
     @classmethod
     def validate_payload(cls, payload: "EsppDepositPayload") -> "EsppDepositPayload":
-        if payload.amount_home_currency <= 0:
-            raise ValueError("Deposit amount must be greater than zero.")
+        if payload.amount_home_currency < 0:
+            raise ValueError("Deposit amount cannot be negative.")
         return payload
 
 
@@ -849,6 +849,20 @@ def ensure_single_open_espp_period(conn, user_id: int, exclude_period_id: int | 
     existing = conn.execute(select(espp_periods.c.id).where(*conditions).limit(1)).first()
     if existing:
         raise HTTPException(status_code=400, detail="Only one ESPP period can be open at a time.")
+
+
+def build_espp_deposit_schedule(start_date: date) -> list[date]:
+    return [start_date + timedelta(days=14 * offset) for offset in range(13)]
+
+
+def ensure_espp_deposit_count(conn, period_id: int) -> None:
+    count = conn.execute(
+        select(func.count())
+        .select_from(espp_deposits)
+        .where(espp_deposits.c.espp_period_id == period_id)
+    ).scalar_one()
+    if count != 13:
+        raise HTTPException(status_code=400, detail="ESPP period must have exactly 13 deposits.")
 
 
 def category_in_use(conn, user_id: int, name: str) -> bool:
@@ -2012,9 +2026,18 @@ def create_espp_period(
             )
         )
         row = conn.execute(stmt).mappings().first()
+        if not row:
+            raise HTTPException(status_code=500, detail="Failed to create ESPP period.")
+        deposit_rows = [
+            {
+                "espp_period_id": row["id"],
+                "date": deposit_date,
+                "amount_home_currency": Decimal("0.00"),
+            }
+            for deposit_date in build_espp_deposit_schedule(payload.start_date)
+        ]
+        conn.execute(insert(espp_deposits), deposit_rows)
 
-    if not row:
-        raise HTTPException(status_code=500, detail="Failed to create ESPP period.")
     return EsppPeriodResponse(
         id=row["id"],
         user_id=row["user_id"],
@@ -2112,6 +2135,7 @@ def list_espp_deposits(
         ).first()
         if not period_exists:
             raise HTTPException(status_code=404, detail="ESPP period not found.")
+        ensure_espp_deposit_count(conn, period_id)
         rows = conn.execute(
             select(espp_deposits)
             .where(espp_deposits.c.espp_period_id == period_id)
@@ -2169,13 +2193,33 @@ def create_espp_deposit(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     with engine.begin() as conn:
-        status = conn.execute(
-            select(espp_periods.c.status).where(espp_periods.c.id == period_id, espp_periods.c.user_id == user_id)
-        ).scalar_one_or_none()
-        if not status:
+        period_info = conn.execute(
+            select(espp_periods.c.start_date, espp_periods.c.status).where(
+                espp_periods.c.id == period_id, espp_periods.c.user_id == user_id
+            )
+        ).mappings().first()
+        if not period_info:
             raise HTTPException(status_code=404, detail="ESPP period not found.")
-        if status != "open":
+        if period_info["status"] != "open":
             raise HTTPException(status_code=400, detail="Deposits are only allowed for open ESPP periods.")
+        schedule = build_espp_deposit_schedule(period_info["start_date"])
+        if payload.date not in schedule:
+            raise HTTPException(status_code=400, detail="Deposit date must match the ESPP schedule.")
+        existing = conn.execute(
+            select(espp_deposits.c.id).where(
+                espp_deposits.c.espp_period_id == period_id,
+                espp_deposits.c.date == payload.date,
+            )
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Deposit already exists for this date.")
+        count = conn.execute(
+            select(func.count())
+            .select_from(espp_deposits)
+            .where(espp_deposits.c.espp_period_id == period_id)
+        ).scalar_one()
+        if count >= 13:
+            raise HTTPException(status_code=400, detail="ESPP period already has 13 deposits.")
         stmt = (
             insert(espp_deposits)
             .values(
@@ -2216,7 +2260,7 @@ def update_espp_deposit(
 
     with engine.begin() as conn:
         period_info = conn.execute(
-            select(espp_deposits.c.espp_period_id, espp_periods.c.status)
+            select(espp_deposits.c.espp_period_id, espp_periods.c.status, espp_deposits.c.date)
             .select_from(espp_deposits.join(espp_periods, espp_deposits.c.espp_period_id == espp_periods.c.id))
             .where(espp_deposits.c.id == deposit_id, espp_periods.c.user_id == user_id)
         ).mappings().first()
@@ -2224,11 +2268,13 @@ def update_espp_deposit(
             raise HTTPException(status_code=404, detail="ESPP deposit not found.")
         if period_info["status"] != "open":
             raise HTTPException(status_code=400, detail="Deposits are only allowed for open ESPP periods.")
+        ensure_espp_deposit_count(conn, period_info["espp_period_id"])
+        if payload.date != period_info["date"]:
+            raise HTTPException(status_code=400, detail="Deposit dates are immutable.")
         stmt = (
             update(espp_deposits)
             .where(espp_deposits.c.id == deposit_id)
             .values(
-                date=payload.date,
                 amount_home_currency=payload.amount_home_currency,
             )
             .returning(
