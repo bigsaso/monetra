@@ -195,6 +195,50 @@ investment_entries = Table(
     Column("date", Date, nullable=False),
 )
 
+espp_periods = Table(
+    "espp_periods",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
+    Column("name", String(255), nullable=False),
+    Column("stock_ticker", String(50), nullable=False),
+    Column("stock_currency", String(3), nullable=False),
+    Column("start_date", Date, nullable=False),
+    Column("status", String(10), nullable=False, server_default="open"),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+)
+
+espp_deposits = Table(
+    "espp_deposits",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("espp_period_id", Integer, ForeignKey("espp_periods.id"), nullable=False),
+    Column("date", Date, nullable=False),
+    Column("amount_home_currency", Numeric(12, 2), nullable=False),
+)
+
+espp_closure = Table(
+    "espp_closure",
+    metadata,
+    Column("espp_period_id", Integer, ForeignKey("espp_periods.id"), primary_key=True),
+    Column("open_fmv", Numeric(12, 5)),
+    Column("close_fmv", Numeric(12, 5)),
+    Column("exchange_rate", Numeric(12, 6)),
+    Column("min_fmv", Numeric(12, 5)),
+    Column("purchase_price", Numeric(12, 5)),
+    Column("total_invested_home", Numeric(12, 2)),
+    Column("total_invested_stock_currency", Numeric(12, 2)),
+    Column("shares_purchased", Numeric(18, 8)),
+    Column("shares_withheld", Numeric(18, 8)),
+    Column("shares_left", Numeric(18, 8)),
+    Column("taxes_paid", Numeric(12, 2)),
+    Column("paid_with_shares", Numeric(18, 8)),
+    Column("refunded_from_taxes", Numeric(12, 2)),
+    Column("unused_for_shares", Numeric(12, 2)),
+    Column("total_refunded", Numeric(12, 2)),
+    Column("closed_at", DateTime),
+)
+
 @app.on_event("startup")
 def init_db() -> None:
     metadata.create_all(engine)
@@ -274,6 +318,17 @@ class InvestmentAssetType:
         normalized = value.strip().lower()
         if normalized not in cls.values:
             raise ValueError("Invalid asset type.")
+        return normalized
+
+
+class EsppPeriodStatus:
+    values = {"open", "closed"}
+
+    @classmethod
+    def validate(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in cls.values:
+            raise ValueError("Invalid ESPP period status.")
         return normalized
 
 
@@ -633,6 +688,56 @@ class InvestmentRealizedResponse(BaseModel):
     converted_at: date | None = None
 
 
+class EsppPeriodPayload(BaseModel):
+    name: str
+    stock_ticker: str
+    stock_currency: str
+    start_date: date
+    status: str | None = None
+
+    @classmethod
+    def validate_payload(cls, payload: "EsppPeriodPayload") -> "EsppPeriodPayload":
+        payload.name = payload.name.strip()
+        if not payload.name:
+            raise ValueError("ESPP period name required.")
+        payload.stock_ticker = payload.stock_ticker.strip().upper()
+        if not payload.stock_ticker:
+            raise ValueError("Stock ticker required.")
+        payload.stock_currency = normalize_currency(payload.stock_currency)
+        if payload.status is not None:
+            payload.status = EsppPeriodStatus.validate(payload.status)
+        return payload
+
+
+class EsppPeriodResponse(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    stock_ticker: str
+    stock_currency: str
+    start_date: date
+    status: str
+    created_at: datetime | None = None
+
+
+class EsppDepositPayload(BaseModel):
+    date: date
+    amount_home_currency: Decimal
+
+    @classmethod
+    def validate_payload(cls, payload: "EsppDepositPayload") -> "EsppDepositPayload":
+        if payload.amount_home_currency <= 0:
+            raise ValueError("Deposit amount must be greater than zero.")
+        return payload
+
+
+class EsppDepositResponse(BaseModel):
+    id: int
+    espp_period_id: int
+    date: date
+    amount_home_currency: Decimal
+
+
 class TransactionImportPreviewResponse(BaseModel):
     transactions: list[ParsedTransaction]
     total_count: int
@@ -735,6 +840,15 @@ def ensure_default_categories(conn, user_id: int) -> None:
         insert(categories),
         [{"user_id": user_id, "name": name} for name in DEFAULT_CATEGORIES],
     )
+
+
+def ensure_single_open_espp_period(conn, user_id: int, exclude_period_id: int | None = None) -> None:
+    conditions = [espp_periods.c.user_id == user_id, espp_periods.c.status == "open"]
+    if exclude_period_id is not None:
+        conditions.append(espp_periods.c.id != exclude_period_id)
+    existing = conn.execute(select(espp_periods.c.id).where(*conditions).limit(1)).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Only one ESPP period can be open at a time.")
 
 
 def category_in_use(conn, user_id: int, name: str) -> bool:
@@ -1810,6 +1924,344 @@ def delete_investment(investment_id: int, x_user_id: str | None = Header(None, a
         result = conn.execute(stmt)
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Investment not found.")
+    return {"status": "deleted"}
+
+
+@app.get("/espp-periods", response_model=list[EsppPeriodResponse])
+def list_espp_periods(
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[EsppPeriodResponse]:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(espp_periods)
+            .where(espp_periods.c.user_id == user_id)
+            .order_by(espp_periods.c.created_at.desc(), espp_periods.c.id.desc())
+        ).mappings().all()
+    return [
+        EsppPeriodResponse(
+            id=row["id"],
+            user_id=row["user_id"],
+            name=row["name"],
+            stock_ticker=row["stock_ticker"],
+            stock_currency=row["stock_currency"],
+            start_date=row["start_date"],
+            status=row["status"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+@app.get("/espp-periods/{period_id}", response_model=EsppPeriodResponse)
+def get_espp_period(
+    period_id: int, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> EsppPeriodResponse:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(espp_periods).where(espp_periods.c.id == period_id, espp_periods.c.user_id == user_id)
+        ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="ESPP period not found.")
+    return EsppPeriodResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        name=row["name"],
+        stock_ticker=row["stock_ticker"],
+        stock_currency=row["stock_currency"],
+        start_date=row["start_date"],
+        status=row["status"],
+        created_at=row["created_at"],
+    )
+
+
+@app.post("/espp-periods", response_model=EsppPeriodResponse)
+def create_espp_period(
+    payload: EsppPeriodPayload, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> EsppPeriodResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = EsppPeriodPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        status = payload.status or "open"
+        if status == "open":
+            ensure_single_open_espp_period(conn, user_id)
+        stmt = (
+            insert(espp_periods)
+            .values(
+                user_id=user_id,
+                name=payload.name,
+                stock_ticker=payload.stock_ticker,
+                stock_currency=payload.stock_currency,
+                start_date=payload.start_date,
+                status=status,
+            )
+            .returning(
+                espp_periods.c.id,
+                espp_periods.c.user_id,
+                espp_periods.c.name,
+                espp_periods.c.stock_ticker,
+                espp_periods.c.stock_currency,
+                espp_periods.c.start_date,
+                espp_periods.c.status,
+                espp_periods.c.created_at,
+            )
+        )
+        row = conn.execute(stmt).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create ESPP period.")
+    return EsppPeriodResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        name=row["name"],
+        stock_ticker=row["stock_ticker"],
+        stock_currency=row["stock_currency"],
+        start_date=row["start_date"],
+        status=row["status"],
+        created_at=row["created_at"],
+    )
+
+
+@app.put("/espp-periods/{period_id}", response_model=EsppPeriodResponse)
+def update_espp_period(
+    period_id: int, payload: EsppPeriodPayload, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> EsppPeriodResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = EsppPeriodPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        status = payload.status
+        if status is None:
+            status = conn.execute(
+                select(espp_periods.c.status).where(
+                    espp_periods.c.id == period_id, espp_periods.c.user_id == user_id
+                )
+            ).scalar_one_or_none()
+            if status is None:
+                raise HTTPException(status_code=404, detail="ESPP period not found.")
+        if status == "open":
+            ensure_single_open_espp_period(conn, user_id, exclude_period_id=period_id)
+        stmt = (
+            update(espp_periods)
+            .where(espp_periods.c.id == period_id, espp_periods.c.user_id == user_id)
+            .values(
+                name=payload.name,
+                stock_ticker=payload.stock_ticker,
+                stock_currency=payload.stock_currency,
+                start_date=payload.start_date,
+                status=status,
+            )
+            .returning(
+                espp_periods.c.id,
+                espp_periods.c.user_id,
+                espp_periods.c.name,
+                espp_periods.c.stock_ticker,
+                espp_periods.c.stock_currency,
+                espp_periods.c.start_date,
+                espp_periods.c.status,
+                espp_periods.c.created_at,
+            )
+        )
+        row = conn.execute(stmt).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="ESPP period not found.")
+    return EsppPeriodResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        name=row["name"],
+        stock_ticker=row["stock_ticker"],
+        stock_currency=row["stock_currency"],
+        start_date=row["start_date"],
+        status=row["status"],
+        created_at=row["created_at"],
+    )
+
+
+@app.delete("/espp-periods/{period_id}")
+def delete_espp_period(period_id: int, x_user_id: str | None = Header(None, alias="x-user-id")) -> dict:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        existing = conn.execute(
+            select(espp_periods.c.id).where(espp_periods.c.id == period_id, espp_periods.c.user_id == user_id)
+        ).first()
+        if not existing:
+            raise HTTPException(status_code=404, detail="ESPP period not found.")
+        conn.execute(espp_deposits.delete().where(espp_deposits.c.espp_period_id == period_id))
+        conn.execute(espp_closure.delete().where(espp_closure.c.espp_period_id == period_id))
+        conn.execute(espp_periods.delete().where(espp_periods.c.id == period_id, espp_periods.c.user_id == user_id))
+    return {"status": "deleted"}
+
+
+@app.get("/espp-periods/{period_id}/deposits", response_model=list[EsppDepositResponse])
+def list_espp_deposits(
+    period_id: int, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> list[EsppDepositResponse]:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        period_exists = conn.execute(
+            select(espp_periods.c.id).where(espp_periods.c.id == period_id, espp_periods.c.user_id == user_id)
+        ).first()
+        if not period_exists:
+            raise HTTPException(status_code=404, detail="ESPP period not found.")
+        rows = conn.execute(
+            select(espp_deposits)
+            .where(espp_deposits.c.espp_period_id == period_id)
+            .order_by(espp_deposits.c.date.asc(), espp_deposits.c.id.asc())
+        ).mappings().all()
+    return [
+        EsppDepositResponse(
+            id=row["id"],
+            espp_period_id=row["espp_period_id"],
+            date=row["date"],
+            amount_home_currency=row["amount_home_currency"],
+        )
+        for row in rows
+    ]
+
+
+@app.get("/espp-deposits/{deposit_id}", response_model=EsppDepositResponse)
+def get_espp_deposit(
+    deposit_id: int, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> EsppDepositResponse:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        row = conn.execute(
+            select(
+                espp_deposits.c.id,
+                espp_deposits.c.espp_period_id,
+                espp_deposits.c.date,
+                espp_deposits.c.amount_home_currency,
+            )
+            .select_from(
+                espp_deposits.join(espp_periods, espp_deposits.c.espp_period_id == espp_periods.c.id)
+            )
+            .where(espp_deposits.c.id == deposit_id, espp_periods.c.user_id == user_id)
+        ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="ESPP deposit not found.")
+    return EsppDepositResponse(
+        id=row["id"],
+        espp_period_id=row["espp_period_id"],
+        date=row["date"],
+        amount_home_currency=row["amount_home_currency"],
+    )
+
+
+@app.post("/espp-periods/{period_id}/deposits", response_model=EsppDepositResponse)
+def create_espp_deposit(
+    period_id: int,
+    payload: EsppDepositPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> EsppDepositResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = EsppDepositPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        status = conn.execute(
+            select(espp_periods.c.status).where(espp_periods.c.id == period_id, espp_periods.c.user_id == user_id)
+        ).scalar_one_or_none()
+        if not status:
+            raise HTTPException(status_code=404, detail="ESPP period not found.")
+        if status != "open":
+            raise HTTPException(status_code=400, detail="Deposits are only allowed for open ESPP periods.")
+        stmt = (
+            insert(espp_deposits)
+            .values(
+                espp_period_id=period_id,
+                date=payload.date,
+                amount_home_currency=payload.amount_home_currency,
+            )
+            .returning(
+                espp_deposits.c.id,
+                espp_deposits.c.espp_period_id,
+                espp_deposits.c.date,
+                espp_deposits.c.amount_home_currency,
+            )
+        )
+        row = conn.execute(stmt).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create ESPP deposit.")
+    return EsppDepositResponse(
+        id=row["id"],
+        espp_period_id=row["espp_period_id"],
+        date=row["date"],
+        amount_home_currency=row["amount_home_currency"],
+    )
+
+
+@app.put("/espp-deposits/{deposit_id}", response_model=EsppDepositResponse)
+def update_espp_deposit(
+    deposit_id: int,
+    payload: EsppDepositPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> EsppDepositResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = EsppDepositPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        period_info = conn.execute(
+            select(espp_deposits.c.espp_period_id, espp_periods.c.status)
+            .select_from(espp_deposits.join(espp_periods, espp_deposits.c.espp_period_id == espp_periods.c.id))
+            .where(espp_deposits.c.id == deposit_id, espp_periods.c.user_id == user_id)
+        ).mappings().first()
+        if not period_info:
+            raise HTTPException(status_code=404, detail="ESPP deposit not found.")
+        if period_info["status"] != "open":
+            raise HTTPException(status_code=400, detail="Deposits are only allowed for open ESPP periods.")
+        stmt = (
+            update(espp_deposits)
+            .where(espp_deposits.c.id == deposit_id)
+            .values(
+                date=payload.date,
+                amount_home_currency=payload.amount_home_currency,
+            )
+            .returning(
+                espp_deposits.c.id,
+                espp_deposits.c.espp_period_id,
+                espp_deposits.c.date,
+                espp_deposits.c.amount_home_currency,
+            )
+        )
+        row = conn.execute(stmt).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="ESPP deposit not found.")
+    return EsppDepositResponse(
+        id=row["id"],
+        espp_period_id=row["espp_period_id"],
+        date=row["date"],
+        amount_home_currency=row["amount_home_currency"],
+    )
+
+
+@app.delete("/espp-deposits/{deposit_id}")
+def delete_espp_deposit(deposit_id: int, x_user_id: str | None = Header(None, alias="x-user-id")) -> dict:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        deposit = conn.execute(
+            select(espp_deposits.c.id)
+            .select_from(espp_deposits.join(espp_periods, espp_deposits.c.espp_period_id == espp_periods.c.id))
+            .where(espp_deposits.c.id == deposit_id, espp_periods.c.user_id == user_id)
+        ).first()
+        if not deposit:
+            raise HTTPException(status_code=404, detail="ESPP deposit not found.")
+        conn.execute(espp_deposits.delete().where(espp_deposits.c.id == deposit_id))
     return {"status": "deleted"}
 
 
