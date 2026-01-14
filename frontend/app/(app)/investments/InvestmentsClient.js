@@ -38,6 +38,8 @@ const assetTypeOptions = [
   { value: "other", label: "Other" }
 ];
 
+const ESPP_CLOSED_STORAGE_KEY = "monetra.esppClosedSummaries";
+
 const normalizeCurrencyValue = (value) =>
   String(value || "").trim().toUpperCase();
 
@@ -180,6 +182,7 @@ export default function InvestmentsClient() {
   const [esppSummary, setEsppSummary] = useState({});
   const [esppSummaryLoading, setEsppSummaryLoading] = useState(false);
   const [esppSummaryError, setEsppSummaryError] = useState("");
+  const [esppClosedSummaries, setEsppClosedSummaries] = useState({});
   const [esppCloseModalOpen, setEsppCloseModalOpen] = useState(false);
   const [esppCloseForm, setEsppCloseForm] = useState({
     account_id: "",
@@ -219,6 +222,12 @@ export default function InvestmentsClient() {
   const [transactionLookup, setTransactionLookup] = useState(null);
   const [transactionLookupLoading, setTransactionLookupLoading] = useState(false);
   const [transactionLookupError, setTransactionLookupError] = useState("");
+  const [esppMarketQuote, setEsppMarketQuote] = useState(null);
+  const [esppMarketLoading, setEsppMarketLoading] = useState(false);
+  const [esppMarketError, setEsppMarketError] = useState("");
+  const [esppFxRate, setEsppFxRate] = useState(null);
+  const [esppFxLoading, setEsppFxLoading] = useState(false);
+  const [esppFxError, setEsppFxError] = useState("");
   const [transactionModalOpen, setTransactionModalOpen] = useState(false);
   const [selectedTransactionId, setSelectedTransactionId] = useState(null);
   const [selectedTransactionFallback, setSelectedTransactionFallback] = useState(null);
@@ -234,6 +243,16 @@ export default function InvestmentsClient() {
       new Intl.NumberFormat("en-US", {
         style: "currency",
         currency: "USD",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }),
+    []
+  );
+
+  const percentFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat("en-US", {
+        style: "percent",
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
       }),
@@ -330,6 +349,77 @@ export default function InvestmentsClient() {
     () => esppCloseSummary || esppSummaryData,
     [esppCloseSummary, esppSummaryData]
   );
+
+  const esppPostCloseSummary = useMemo(() => {
+    if (!selectedEsppPeriodId || selectedEsppPeriod?.status !== "closed") {
+      return null;
+    }
+    return esppClosedSummaries[selectedEsppPeriodId] || esppSummaryData || null;
+  }, [
+    esppClosedSummaries,
+    esppSummaryData,
+    selectedEsppPeriod?.status,
+    selectedEsppPeriodId
+  ]);
+
+  const esppLiveMetrics = useMemo(() => {
+    if (!esppPostCloseSummary) {
+      return null;
+    }
+    const sharesPurchased = Number(esppPostCloseSummary.shares_purchased || 0);
+    const sharesLeft = Number(esppPostCloseSummary.shares_left || 0);
+    const taxesPaid = Number(esppPostCloseSummary.taxes_paid || 0);
+    const totalRefunded = Number(esppPostCloseSummary.total_refunded || 0);
+    const totalInvestedHome = Number(esppPostCloseSummary.total_invested_home || 0);
+    const livePrice = Number(esppMarketQuote?.price || 0);
+    if (!Number.isFinite(livePrice) || livePrice <= 0) {
+      return {
+        sharesPurchased,
+        sharesLeft,
+        taxesPaid,
+        totalRefunded,
+        totalInvestedHome,
+        livePrice: null,
+        currentValue: null,
+        sellableValue: null,
+        totalValueStock: null,
+        totalValueHome: null,
+        profitLoss: null,
+        profitLossPercent: null
+      };
+    }
+    const currentValue = sharesPurchased * livePrice;
+    const sellableValue = sharesLeft * livePrice;
+    const totalValueStock = sellableValue + totalRefunded;
+    const fxRate =
+      esppFxRate && Number.isFinite(Number(esppFxRate))
+        ? Number(esppFxRate)
+        : null;
+    const totalValueHome =
+      fxRate && Number.isFinite(fxRate) ? totalValueStock * fxRate : null;
+    const profitLoss =
+      totalValueHome !== null && Number.isFinite(totalInvestedHome)
+        ? totalValueHome - totalInvestedHome
+        : null;
+    const profitLossPercent =
+      profitLoss !== null && totalInvestedHome > 0
+        ? profitLoss / totalInvestedHome
+        : null;
+    return {
+      sharesPurchased,
+      sharesLeft,
+      taxesPaid,
+      totalRefunded,
+      totalInvestedHome,
+      livePrice,
+      currentValue,
+      sellableValue,
+      totalValueStock,
+      totalValueHome,
+      profitLoss,
+      profitLossPercent
+    };
+  }, [esppFxRate, esppMarketQuote, esppPostCloseSummary]);
 
   const filteredActivity = useMemo(() => {
     if (activityInvestmentFilter === "all") {
@@ -592,6 +682,25 @@ export default function InvestmentsClient() {
   };
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      const stored = window.localStorage.getItem(ESPP_CLOSED_STORAGE_KEY);
+      if (!stored) {
+        return;
+      }
+      const parsed = JSON.parse(stored);
+      if (parsed && typeof parsed === "object") {
+        setEsppClosedSummaries(parsed);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
+    }
+  }, []);
+
+  useEffect(() => {
     loadPositions();
     loadActivity();
     loadRealized();
@@ -655,6 +764,101 @@ export default function InvestmentsClient() {
     esppCloseForm
   ]);
 
+  useEffect(() => {
+    if (!selectedEsppPeriodId || selectedEsppPeriod?.status !== "closed") {
+      setEsppMarketQuote(null);
+      setEsppFxRate(null);
+      setEsppMarketError("");
+      setEsppFxError("");
+      setEsppMarketLoading(false);
+      setEsppFxLoading(false);
+      return;
+    }
+    const ticker = selectedEsppPeriod?.stock_ticker?.trim();
+    const stockCurrency = normalizeCurrencyValue(selectedEsppPeriod?.stock_currency);
+    const targetCurrency = normalizeCurrencyValue(homeCurrency);
+    if (!ticker) {
+      setEsppMarketError("Stock ticker required for live pricing.");
+      setEsppMarketLoading(false);
+      setEsppFxLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const loadMarket = async () => {
+      setEsppMarketLoading(true);
+      setEsppFxLoading(true);
+      setEsppMarketError("");
+      setEsppFxError("");
+      try {
+        const quoteRequest = fetch(
+          `/api/market/quote?symbol=${encodeURIComponent(ticker)}`
+        );
+        const fxRequest =
+          !stockCurrency ||
+          !targetCurrency ||
+          stockCurrency === targetCurrency
+            ? Promise.resolve({ rate: 1 })
+            : fetch(
+                `/api/market/fx?base=${encodeURIComponent(
+                  stockCurrency
+                )}&target=${encodeURIComponent(targetCurrency)}`
+              );
+        const [quoteResponse, fxResponse] = await Promise.all([
+          quoteRequest,
+          fxRequest
+        ]);
+        if (!cancelled) {
+          if (quoteResponse?.ok) {
+            const quoteData = await quoteResponse.json();
+            setEsppMarketQuote(quoteData);
+          } else {
+            const quoteError = await quoteResponse.json();
+            throw new Error(quoteError?.detail || "Failed to load live price.");
+          }
+          if (fxResponse?.rate === 1) {
+            setEsppFxRate(1);
+          } else if (fxResponse?.ok) {
+            const fxData = await fxResponse.json();
+            if (typeof fxData?.rate === "number") {
+              setEsppFxRate(fxData.rate);
+            } else {
+              setEsppFxRate(null);
+              setEsppFxError("Live FX rate unavailable.");
+            }
+          } else if (stockCurrency === targetCurrency) {
+            setEsppFxRate(1);
+          } else {
+            setEsppFxRate(null);
+            setEsppFxError("Live FX rate unavailable.");
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setEsppMarketError(err.message || "Failed to load live market data.");
+          setEsppMarketQuote(null);
+          setEsppFxRate(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setEsppMarketLoading(false);
+          setEsppFxLoading(false);
+        }
+      }
+    };
+    loadMarket();
+    const interval = setInterval(loadMarket, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [
+    homeCurrency,
+    selectedEsppPeriod?.status,
+    selectedEsppPeriod?.stock_currency,
+    selectedEsppPeriod?.stock_ticker,
+    selectedEsppPeriodId
+  ]);
+
   useEffect(
     () => () => {
       Object.values(esppSaveTimers.current).forEach((timer) =>
@@ -702,6 +906,18 @@ export default function InvestmentsClient() {
     setEsppForm(buildEsppFormDefaults(homeCurrency, today));
     setEsppFormError("");
     setEsppModalOpen(true);
+  };
+
+  const persistEsppClosedSummaries = (next) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(ESPP_CLOSED_STORAGE_KEY, JSON.stringify(next));
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
+    }
   };
 
   const openEsppCloseModal = () => {
@@ -929,6 +1145,17 @@ export default function InvestmentsClient() {
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data?.detail || "Failed to close ESPP period.");
+      }
+      if (data?.summary) {
+        setEsppSummary((prev) => ({
+          ...prev,
+          [selectedEsppPeriodId]: data.summary
+        }));
+        setEsppClosedSummaries((prev) => {
+          const next = { ...prev, [selectedEsppPeriodId]: data.summary };
+          persistEsppClosedSummaries(next);
+          return next;
+        });
       }
       await Promise.all([
         loadEsppPeriods(String(selectedEsppPeriodId)),
@@ -1470,7 +1697,9 @@ export default function InvestmentsClient() {
                                           )
                                         : null
                                     }
-                                    disabled={!deposit.id}
+                                    disabled={
+                                      !deposit.id || selectedEsppPeriod?.status !== "open"
+                                    }
                                   />
                                   {deposit.id && esppDepositSaving[deposit.id] ? (
                                     <span className="text-xs text-slate-400">
@@ -1710,6 +1939,137 @@ export default function InvestmentsClient() {
                         </>
                       )}
                     </div>
+                    {selectedEsppPeriod.status === "closed" ? (
+                      <div className="rounded-md border border-slate-200 bg-white p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-700">
+                              ESPP valuation (post-close)
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              Live pricing and FX refresh every minute.
+                            </div>
+                          </div>
+                          <Button type="button" variant="outline" asChild>
+                            <Link href="/investments">Go to Investments</Link>
+                          </Button>
+                        </div>
+                        {!esppPostCloseSummary ? (
+                          <p className="mt-3 text-sm text-slate-500">
+                            Close summary unavailable for this period yet.
+                          </p>
+                        ) : (
+                          <div className="mt-4 grid gap-3 md:grid-cols-2">
+                            <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                Current value ({selectedEsppPeriod.stock_currency})
+                              </div>
+                              <div className="text-slate-900">
+                                {esppLiveMetrics?.totalValueStock != null
+                                  ? formatMoney(
+                                      esppLiveMetrics.totalValueStock,
+                                      selectedEsppPeriod.stock_currency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                Estimated taxes ({selectedEsppPeriod.stock_currency})
+                              </div>
+                              <div className="text-slate-900">
+                                {esppPostCloseSummary?.taxes_paid != null
+                                  ? formatMoney(
+                                      esppPostCloseSummary.taxes_paid,
+                                      selectedEsppPeriod.stock_currency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                Can sell amount ({selectedEsppPeriod.stock_currency})
+                              </div>
+                              <div className="text-slate-900">
+                                {esppLiveMetrics?.sellableValue != null
+                                  ? formatMoney(
+                                      esppLiveMetrics.sellableValue,
+                                      selectedEsppPeriod.stock_currency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                Converted value ({homeCurrency})
+                              </div>
+                              <div className="text-slate-900">
+                                {esppLiveMetrics?.totalValueHome != null
+                                  ? formatMoney(
+                                      esppLiveMetrics.totalValueHome,
+                                      homeCurrency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                P&amp;L ({homeCurrency})
+                              </div>
+                              <div
+                                className={
+                                  esppLiveMetrics?.profitLoss == null
+                                    ? "text-slate-900"
+                                    : esppLiveMetrics.profitLoss < 0
+                                      ? "text-rose-600"
+                                      : "text-emerald-600"
+                                }
+                              >
+                                {esppLiveMetrics?.profitLoss != null
+                                  ? formatMoney(
+                                      esppLiveMetrics.profitLoss,
+                                      homeCurrency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">P&amp;L %</div>
+                              <div
+                                className={
+                                  esppLiveMetrics?.profitLossPercent == null
+                                    ? "text-slate-900"
+                                    : esppLiveMetrics.profitLossPercent < 0
+                                      ? "text-rose-600"
+                                      : "text-emerald-600"
+                                }
+                              >
+                                {esppLiveMetrics?.profitLossPercent != null
+                                  ? percentFormatter.format(
+                                      esppLiveMetrics.profitLossPercent
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {(esppMarketLoading || esppFxLoading) && esppPostCloseSummary ? (
+                          <p className="mt-3 text-xs text-slate-400">
+                            Fetching live market data...
+                          </p>
+                        ) : null}
+                        {esppMarketError ? (
+                          <p className="mt-2 text-sm text-rose-600">
+                            {esppMarketError}
+                          </p>
+                        ) : null}
+                        {esppFxError ? (
+                          <p className="mt-2 text-sm text-rose-600">
+                            {esppFxError}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </>
                 ) : null}
               </>
