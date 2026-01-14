@@ -780,6 +780,47 @@ class EsppSummaryResponse(BaseModel):
     total_refunded: Decimal | None = None
 
 
+class EsppOpenFmvPayload(BaseModel):
+    open_fmv: Decimal | None = None
+
+    @classmethod
+    def validate_payload(cls, payload: "EsppOpenFmvPayload") -> "EsppOpenFmvPayload":
+        if payload.open_fmv is not None and payload.open_fmv < 0:
+            raise ValueError("Open FMV cannot be negative.")
+        return payload
+
+
+class EsppOpenFmvResponse(BaseModel):
+    open_fmv: Decimal | None = None
+
+
+class EsppClosePayload(BaseModel):
+    account_id: int
+    open_fmv: Decimal
+    close_fmv: Decimal
+    exchange_rate: Decimal
+
+    @classmethod
+    def validate_payload(cls, payload: "EsppClosePayload") -> "EsppClosePayload":
+        if payload.account_id <= 0:
+            raise ValueError("Account is required.")
+        if payload.open_fmv <= 0:
+            raise ValueError("Open FMV must be greater than zero.")
+        if payload.close_fmv <= 0:
+            raise ValueError("Close FMV must be greater than zero.")
+        if payload.exchange_rate <= 0:
+            raise ValueError("Exchange rate must be greater than zero.")
+        return payload
+
+
+class EsppCloseResponse(BaseModel):
+    period_id: int
+    status: str
+    transaction_id: int
+    investment_id: int
+    summary: EsppSummaryResponse
+
+
 class TransactionImportPreviewResponse(BaseModel):
     transactions: list[ParsedTransaction]
     total_count: int
@@ -2165,11 +2206,269 @@ def preview_espp_summary(
             select(func.coalesce(func.sum(espp_deposits.c.amount_home_currency), 0))
             .where(espp_deposits.c.espp_period_id == period_id)
         ).scalar_one()
+        stored_open_fmv = None
+        if payload.open_fmv is not None:
+            normalized_open_fmv = payload.open_fmv.quantize(ESPP_PRICE_QUANT)
+            existing = conn.execute(
+                select(espp_closure.c.espp_period_id).where(
+                    espp_closure.c.espp_period_id == period_id
+                )
+            ).first()
+            if existing:
+                conn.execute(
+                    update(espp_closure)
+                    .where(espp_closure.c.espp_period_id == period_id)
+                    .values(open_fmv=normalized_open_fmv)
+                )
+            else:
+                conn.execute(
+                    insert(espp_closure).values(
+                        espp_period_id=period_id, open_fmv=normalized_open_fmv
+                    )
+                )
+            stored_open_fmv = normalized_open_fmv
+        else:
+            stored_open_fmv = conn.execute(
+                select(espp_closure.c.open_fmv).where(
+                    espp_closure.c.espp_period_id == period_id
+                )
+            ).scalar_one_or_none()
     return compute_espp_summary(
         Decimal(total_invested_home),
-        payload.open_fmv,
+        payload.open_fmv if payload.open_fmv is not None else stored_open_fmv,
         payload.close_fmv,
         payload.exchange_rate,
+    )
+
+
+@app.post("/espp-periods/{period_id}/open-fmv", response_model=EsppOpenFmvResponse)
+def save_espp_open_fmv(
+    period_id: int,
+    payload: EsppOpenFmvPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> EsppOpenFmvResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = EsppOpenFmvPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with engine.begin() as conn:
+        period_row = conn.execute(
+            select(espp_periods.c.status).where(
+                espp_periods.c.id == period_id, espp_periods.c.user_id == user_id
+            )
+        ).first()
+        if not period_row:
+            raise HTTPException(status_code=404, detail="ESPP period not found.")
+        if period_row[0] != "open":
+            raise HTTPException(status_code=400, detail="ESPP period must be open.")
+        normalized_open_fmv = (
+            payload.open_fmv.quantize(ESPP_PRICE_QUANT)
+            if payload.open_fmv is not None
+            else None
+        )
+        existing = conn.execute(
+            select(espp_closure.c.espp_period_id).where(
+                espp_closure.c.espp_period_id == period_id
+            )
+        ).first()
+        if existing:
+            conn.execute(
+                update(espp_closure)
+                .where(espp_closure.c.espp_period_id == period_id)
+                .values(open_fmv=normalized_open_fmv)
+            )
+        elif normalized_open_fmv is not None:
+            conn.execute(
+                insert(espp_closure).values(
+                    espp_period_id=period_id, open_fmv=normalized_open_fmv
+                )
+            )
+    return EsppOpenFmvResponse(open_fmv=normalized_open_fmv)
+
+
+@app.post("/espp-periods/{period_id}/close", response_model=EsppCloseResponse)
+def close_espp_period(
+    period_id: int,
+    payload: EsppClosePayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> EsppCloseResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = EsppClosePayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        period_row = conn.execute(
+            select(
+                espp_periods.c.id,
+                espp_periods.c.status,
+                espp_periods.c.stock_ticker,
+                espp_periods.c.stock_currency,
+            ).where(espp_periods.c.id == period_id, espp_periods.c.user_id == user_id)
+        ).mappings().first()
+        if not period_row:
+            raise HTTPException(status_code=404, detail="ESPP period not found.")
+        if period_row["status"] != "open":
+            raise HTTPException(status_code=400, detail="ESPP period must be open.")
+        account_exists = conn.execute(
+            select(accounts.c.id).where(
+                accounts.c.id == payload.account_id, accounts.c.user_id == user_id
+            )
+        ).first()
+        if not account_exists:
+            raise HTTPException(status_code=404, detail="Account not found.")
+        ensure_espp_deposit_count(conn, period_id)
+        total_invested_home = conn.execute(
+            select(func.coalesce(func.sum(espp_deposits.c.amount_home_currency), 0))
+            .where(espp_deposits.c.espp_period_id == period_id)
+        ).scalar_one()
+        summary = compute_espp_summary(
+            Decimal(total_invested_home),
+            payload.open_fmv,
+            payload.close_fmv,
+            payload.exchange_rate,
+        )
+        if summary.shares_left is None or summary.close_fmv is None:
+            raise HTTPException(
+                status_code=400,
+                detail="ESPP summary is incomplete.",
+            )
+        if summary.shares_left <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="ESPP shares must be greater than zero.",
+            )
+        last_deposit_date = conn.execute(
+            select(func.max(espp_deposits.c.date)).where(
+                espp_deposits.c.espp_period_id == period_id
+            )
+        ).scalar_one_or_none()
+        if last_deposit_date is None:
+            raise HTTPException(status_code=400, detail="ESPP deposits are incomplete.")
+
+        category_name = "ESPP"
+        category_exists = conn.execute(
+            select(categories.c.id).where(
+                categories.c.user_id == user_id, categories.c.name == category_name
+            )
+        ).mappings().first()
+        if not category_exists:
+            conn.execute(
+                insert(categories).values(
+                    user_id=user_id,
+                    name=category_name,
+                    group="investments",
+                )
+            )
+
+        investment_name = f"ESPP ({period_row['stock_ticker']})"
+        investment_row = conn.execute(
+            select(investments.c.id).where(
+                investments.c.user_id == user_id, investments.c.name == investment_name
+            )
+        ).mappings().first()
+        if not investment_row:
+            investment_row = conn.execute(
+                insert(investments)
+                .values(
+                    user_id=user_id,
+                    name=investment_name,
+                    symbol=period_row["stock_ticker"],
+                    asset_type="stock",
+                )
+                .returning(investments.c.id)
+            ).mappings().first()
+        if not investment_row:
+            raise HTTPException(status_code=500, detail="Failed to create investment.")
+        investment_id = investment_row["id"]
+
+        total_amount = (summary.shares_left * summary.close_fmv).quantize(ESPP_MONEY_QUANT)
+        txn_row = conn.execute(
+            insert(transactions)
+            .values(
+                user_id=user_id,
+                account_id=payload.account_id,
+                amount=total_amount,
+                currency=period_row["stock_currency"],
+                type="expense",
+                category=category_name,
+                date=last_deposit_date,
+                notes=None,
+            )
+            .returning(transactions.c.id)
+        ).mappings().first()
+        if not txn_row:
+            raise HTTPException(status_code=500, detail="Failed to create transaction.")
+        transaction_id = txn_row["id"]
+
+        conn.execute(
+            insert(investment_entries).values(
+                user_id=user_id,
+                investment_id=investment_id,
+                transaction_id=transaction_id,
+                quantity=summary.shares_left,
+                price=summary.close_fmv,
+                price_per_share=summary.close_fmv,
+                total_amount=total_amount,
+                currency=period_row["stock_currency"],
+                type="buy",
+                date=last_deposit_date,
+            )
+        )
+        try:
+            recalculate_investment_position(conn, user_id, investment_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        closure_values = {
+            "open_fmv": summary.open_fmv,
+            "close_fmv": summary.close_fmv,
+            "exchange_rate": summary.exchange_rate,
+            "min_fmv": summary.min_fmv,
+            "purchase_price": summary.purchase_price,
+            "total_invested_home": summary.total_invested_home,
+            "total_invested_stock_currency": summary.total_invested_stock_currency,
+            "shares_purchased": summary.shares_purchased,
+            "shares_withheld": summary.shares_withheld,
+            "shares_left": summary.shares_left,
+            "taxes_paid": summary.taxes_paid,
+            "paid_with_shares": summary.paid_with_shares,
+            "refunded_from_taxes": summary.refunded_from_taxes,
+            "unused_for_shares": summary.unused_for_shares,
+            "total_refunded": summary.total_refunded,
+            "closed_at": func.now(),
+        }
+        existing_closure = conn.execute(
+            select(espp_closure.c.espp_period_id).where(
+                espp_closure.c.espp_period_id == period_id
+            )
+        ).first()
+        if existing_closure:
+            conn.execute(
+                update(espp_closure)
+                .where(espp_closure.c.espp_period_id == period_id)
+                .values(**closure_values)
+            )
+        else:
+            conn.execute(
+                insert(espp_closure).values(
+                    espp_period_id=period_id, **closure_values
+                )
+            )
+        conn.execute(
+            update(espp_periods)
+            .where(espp_periods.c.id == period_id, espp_periods.c.user_id == user_id)
+            .values(status="closed")
+        )
+
+    return EsppCloseResponse(
+        period_id=period_id,
+        status="closed",
+        transaction_id=transaction_id,
+        investment_id=investment_id,
+        summary=summary,
     )
 
 
@@ -2244,15 +2543,18 @@ def update_espp_period(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     with engine.begin() as conn:
-        status = payload.status
-        if status is None:
-            status = conn.execute(
-                select(espp_periods.c.status).where(
-                    espp_periods.c.id == period_id, espp_periods.c.user_id == user_id
-                )
-            ).scalar_one_or_none()
-            if status is None:
-                raise HTTPException(status_code=404, detail="ESPP period not found.")
+        current_status = conn.execute(
+            select(espp_periods.c.status).where(
+                espp_periods.c.id == period_id, espp_periods.c.user_id == user_id
+            )
+        ).scalar_one_or_none()
+        if current_status is None:
+            raise HTTPException(status_code=404, detail="ESPP period not found.")
+        if current_status == "closed":
+            raise HTTPException(status_code=400, detail="Closed ESPP periods cannot be modified.")
+        if payload.status == "closed":
+            raise HTTPException(status_code=400, detail="Use the ESPP close flow to close a period.")
+        status = payload.status or current_status
         if status == "open":
             ensure_single_open_espp_period(conn, user_id, exclude_period_id=period_id)
         stmt = (

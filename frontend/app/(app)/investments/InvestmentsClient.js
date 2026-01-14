@@ -119,9 +119,15 @@ const formatShortDate = (value) => {
 };
 
 const parseNumberInput = (value) => {
+  if (value === "" || value === null || value === undefined) {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
+
+const formatNumberInput = (value) =>
+  value === null || value === undefined ? "" : String(value);
 
 const buildEsppSchedule = (startDate) => {
   const base = parseDateValue(startDate);
@@ -174,6 +180,17 @@ export default function InvestmentsClient() {
   const [esppSummary, setEsppSummary] = useState({});
   const [esppSummaryLoading, setEsppSummaryLoading] = useState(false);
   const [esppSummaryError, setEsppSummaryError] = useState("");
+  const [esppCloseModalOpen, setEsppCloseModalOpen] = useState(false);
+  const [esppCloseForm, setEsppCloseForm] = useState({
+    account_id: "",
+    open_fmv: "",
+    close_fmv: "",
+    exchange_rate: ""
+  });
+  const [esppCloseSummary, setEsppCloseSummary] = useState(null);
+  const [esppCloseLoading, setEsppCloseLoading] = useState(false);
+  const [esppCloseError, setEsppCloseError] = useState("");
+  const [esppCloseSaving, setEsppCloseSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [realized, setRealized] = useState([]);
   const [realizedLoading, setRealizedLoading] = useState(true);
@@ -209,6 +226,8 @@ export default function InvestmentsClient() {
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const esppSaveTimers = useRef({});
   const esppSummaryTimer = useRef(null);
+  const esppOpenFmvSaveTimer = useRef(null);
+  const esppCloseSummaryTimer = useRef(null);
 
   const currencyFormatter = useMemo(
     () =>
@@ -301,6 +320,16 @@ export default function InvestmentsClient() {
     }
     return esppSummary[selectedEsppPeriodId] || null;
   }, [esppSummary, selectedEsppPeriodId]);
+
+  const esppSummaryOpenFmvInput =
+    esppSummaryInputsForPeriod.open_fmv !== ""
+      ? esppSummaryInputsForPeriod.open_fmv
+      : formatNumberInput(esppSummaryData?.open_fmv);
+
+  const esppCloseSummaryData = useMemo(
+    () => esppCloseSummary || esppSummaryData,
+    [esppCloseSummary, esppSummaryData]
+  );
 
   const filteredActivity = useMemo(() => {
     if (activityInvestmentFilter === "all") {
@@ -430,6 +459,19 @@ export default function InvestmentsClient() {
     stock_currency: currency || "USD"
   });
 
+  const buildEsppCloseDefaults = () => ({
+    account_id: "",
+    open_fmv:
+      esppSummaryInputsForPeriod.open_fmv ||
+      formatNumberInput(esppSummaryData?.open_fmv),
+    close_fmv:
+      esppSummaryInputsForPeriod.close_fmv ||
+      formatNumberInput(esppSummaryData?.close_fmv),
+    exchange_rate:
+      esppSummaryInputsForPeriod.exchange_rate ||
+      formatNumberInput(esppSummaryData?.exchange_rate)
+  });
+
   const loadEsppPeriods = async (preferredPeriodId = "") => {
     setEsppPeriodsLoading(true);
     setEsppPeriodsError("");
@@ -519,6 +561,36 @@ export default function InvestmentsClient() {
     }
   };
 
+  const loadEsppCloseSummary = async (periodId, inputs) => {
+    if (!periodId) {
+      return;
+    }
+    setEsppCloseLoading(true);
+    setEsppCloseError("");
+    try {
+      const payload = {
+        open_fmv: parseNumberInput(inputs.open_fmv),
+        close_fmv: parseNumberInput(inputs.close_fmv),
+        exchange_rate: parseNumberInput(inputs.exchange_rate)
+      };
+      const response = await fetch(`/api/espp-periods/${periodId}/summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load ESPP summary.");
+      }
+      const data = await response.json();
+      setEsppCloseSummary(data);
+    } catch (err) {
+      setEsppCloseError(err.message);
+    } finally {
+      setEsppCloseLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadPositions();
     loadActivity();
@@ -557,6 +629,32 @@ export default function InvestmentsClient() {
     esppDeposits
   ]);
 
+  useEffect(() => {
+    if (
+      !esppCloseModalOpen ||
+      !selectedEsppPeriodId ||
+      selectedEsppPeriod?.status !== "open"
+    ) {
+      return;
+    }
+    if (esppCloseSummaryTimer.current) {
+      clearTimeout(esppCloseSummaryTimer.current);
+    }
+    esppCloseSummaryTimer.current = setTimeout(() => {
+      loadEsppCloseSummary(selectedEsppPeriodId, esppCloseForm);
+    }, 300);
+    return () => {
+      if (esppCloseSummaryTimer.current) {
+        clearTimeout(esppCloseSummaryTimer.current);
+      }
+    };
+  }, [
+    esppCloseModalOpen,
+    selectedEsppPeriodId,
+    selectedEsppPeriod?.status,
+    esppCloseForm
+  ]);
+
   useEffect(
     () => () => {
       Object.values(esppSaveTimers.current).forEach((timer) =>
@@ -564,6 +662,12 @@ export default function InvestmentsClient() {
       );
       if (esppSummaryTimer.current) {
         clearTimeout(esppSummaryTimer.current);
+      }
+      if (esppOpenFmvSaveTimer.current) {
+        clearTimeout(esppOpenFmvSaveTimer.current);
+      }
+      if (esppCloseSummaryTimer.current) {
+        clearTimeout(esppCloseSummaryTimer.current);
       }
     },
     []
@@ -598,6 +702,25 @@ export default function InvestmentsClient() {
     setEsppForm(buildEsppFormDefaults(homeCurrency, today));
     setEsppFormError("");
     setEsppModalOpen(true);
+  };
+
+  const openEsppCloseModal = () => {
+    if (!selectedEsppPeriod || selectedEsppPeriod.status !== "open") {
+      return;
+    }
+    setEsppCloseForm(buildEsppCloseDefaults());
+    setEsppCloseSummary(esppSummaryData || null);
+    setEsppCloseError("");
+    setEsppCloseModalOpen(true);
+  };
+
+  const closeEsppCloseModal = () => {
+    if (esppCloseSaving) {
+      return;
+    }
+    setEsppCloseModalOpen(false);
+    setEsppCloseError("");
+    setEsppCloseSummary(null);
   };
 
   const handleEsppFormChange = (event) => {
@@ -691,6 +814,26 @@ export default function InvestmentsClient() {
     }
   };
 
+  const saveEsppOpenFmv = async (periodId, openFmvValue) => {
+    if (!periodId) {
+      return;
+    }
+    setEsppSummaryError("");
+    try {
+      const response = await fetch(`/api/espp-periods/${periodId}/open-fmv`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ open_fmv: openFmvValue })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to save open FMV.");
+      }
+    } catch (err) {
+      setEsppSummaryError(err.message);
+    }
+  };
+
   const handleEsppDepositChange = (depositId, dateValue, value) => {
     setEsppDeposits((prev) =>
       prev.map((deposit) =>
@@ -722,6 +865,84 @@ export default function InvestmentsClient() {
         [name]: value
       }
     }));
+    if (name !== "open_fmv" || selectedEsppPeriod?.status !== "open") {
+      return;
+    }
+    if (esppOpenFmvSaveTimer.current) {
+      clearTimeout(esppOpenFmvSaveTimer.current);
+    }
+    const normalizedValue = value === "" ? null : parseNumberInput(value);
+    if (value !== "" && (normalizedValue === null || normalizedValue < 0)) {
+      return;
+    }
+    esppOpenFmvSaveTimer.current = setTimeout(() => {
+      saveEsppOpenFmv(selectedEsppPeriodId, normalizedValue);
+    }, 500);
+  };
+
+  const handleEsppCloseInputChange = (event) => {
+    const { name, value } = event.target;
+    setEsppCloseForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleEsppCloseSubmit = async (event) => {
+    event.preventDefault();
+    if (!selectedEsppPeriodId) {
+      return;
+    }
+    if (!esppCloseForm.account_id) {
+      setEsppCloseError("Select an account.");
+      return;
+    }
+    const openFmv = parseNumberInput(esppCloseForm.open_fmv);
+    if (!openFmv || openFmv <= 0) {
+      setEsppCloseError("Enter a valid open FMV.");
+      return;
+    }
+    const closeFmv = parseNumberInput(esppCloseForm.close_fmv);
+    if (!closeFmv || closeFmv <= 0) {
+      setEsppCloseError("Enter a valid close FMV.");
+      return;
+    }
+    const exchangeRate = parseNumberInput(esppCloseForm.exchange_rate);
+    if (!exchangeRate || exchangeRate <= 0) {
+      setEsppCloseError("Enter a valid exchange rate.");
+      return;
+    }
+
+    setEsppCloseSaving(true);
+    setEsppCloseError("");
+    try {
+      const response = await fetch(
+        `/api/espp-periods/${selectedEsppPeriodId}/close`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            account_id: Number(esppCloseForm.account_id),
+            open_fmv: openFmv,
+            close_fmv: closeFmv,
+            exchange_rate: exchangeRate
+          })
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to close ESPP period.");
+      }
+      await Promise.all([
+        loadEsppPeriods(String(selectedEsppPeriodId)),
+        loadEsppDeposits(selectedEsppPeriodId),
+        loadPositions(),
+        loadActivity(),
+        loadRealized()
+      ]);
+      closeEsppCloseModal();
+    } catch (err) {
+      setEsppCloseError(err.message);
+    } finally {
+      setEsppCloseSaving(false);
+    }
   };
 
   const buildInvestmentLabel = (name, symbol) => {
@@ -1077,6 +1298,18 @@ export default function InvestmentsClient() {
   }, [accounts, categories, sellForm.account_id, sellForm.category, sellModalOpen]);
 
   useEffect(() => {
+    if (!esppCloseModalOpen) {
+      return;
+    }
+    if (!esppCloseForm.account_id && accounts.length === 1) {
+      setEsppCloseForm((prev) => ({
+        ...prev,
+        account_id: String(accounts[0].id)
+      }));
+    }
+  }, [accounts, esppCloseForm.account_id, esppCloseModalOpen]);
+
+  useEffect(() => {
     setActivityPage((prev) => {
       if (prev < 1) {
         return 1;
@@ -1261,11 +1494,23 @@ export default function InvestmentsClient() {
                             Enter FMVs and exchange rate to preview the purchase.
                           </div>
                         </div>
-                        {esppSummaryLoading ? (
-                          <span className="text-xs text-slate-400">
-                            Calculating...
-                          </span>
-                        ) : null}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {esppSummaryLoading ? (
+                            <span className="text-xs text-slate-400">
+                              Calculating...
+                            </span>
+                          ) : null}
+                          {selectedEsppPeriod?.status === "open" ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={openEsppCloseModal}
+                              disabled={!esppSummaryData?.shares_left}
+                            >
+                              Close ESPP period
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
                       {selectedEsppPeriod.status !== "open" ? (
                         <p className="mt-3 text-sm text-slate-500">
@@ -1282,7 +1527,7 @@ export default function InvestmentsClient() {
                                 step="0.00001"
                                 min="0"
                                 name="open_fmv"
-                                value={esppSummaryInputsForPeriod.open_fmv}
+                                value={esppSummaryOpenFmvInput}
                                 onChange={handleEsppSummaryInputChange}
                               />
                             </label>
@@ -1754,6 +1999,244 @@ export default function InvestmentsClient() {
               </DialogClose>
               <Button type="submit" disabled={esppSaving}>
                 Create period
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={esppCloseModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeEsppCloseModal();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[560px] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Close ESPP period</DialogTitle>
+            <DialogDescription>
+              Confirm the purchase details and create the ESPP investment entry.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleEsppCloseSubmit} className="grid gap-4">
+            <label className="text-sm text-slate-600">
+              Account
+              <select
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                name="account_id"
+                value={esppCloseForm.account_id}
+                onChange={handleEsppCloseInputChange}
+                required
+              >
+                <option value="">Select an account</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name} • {account.type}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="grid gap-3 md:grid-cols-3">
+              <label className="text-sm text-slate-600">
+                Open FMV ({selectedEsppPeriod?.stock_currency})
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  type="number"
+                  step="0.00001"
+                  min="0"
+                  name="open_fmv"
+                  value={esppCloseForm.open_fmv}
+                  onChange={handleEsppCloseInputChange}
+                  readOnly
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                Close FMV ({selectedEsppPeriod?.stock_currency})
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  type="number"
+                  step="0.00001"
+                  min="0"
+                  name="close_fmv"
+                  value={esppCloseForm.close_fmv}
+                  onChange={handleEsppCloseInputChange}
+                  required
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                Exchange rate ({homeCurrency} → {selectedEsppPeriod?.stock_currency})
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  type="number"
+                  step="0.000001"
+                  min="0"
+                  name="exchange_rate"
+                  value={esppCloseForm.exchange_rate}
+                  onChange={handleEsppCloseInputChange}
+                  required
+                />
+              </label>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-white px-3 py-3 text-sm">
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span>Calculated summary</span>
+                {esppCloseLoading ? <span>Updating...</span> : null}
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Total invested ({homeCurrency})
+                  </div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.total_invested_home != null
+                      ? formatMoney(
+                          esppCloseSummaryData.total_invested_home,
+                          homeCurrency
+                        )
+                      : "-"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Total invested ({selectedEsppPeriod?.stock_currency})
+                  </div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.total_invested_stock_currency != null
+                      ? formatMoney(
+                          esppCloseSummaryData.total_invested_stock_currency,
+                          selectedEsppPeriod?.stock_currency
+                        )
+                      : "-"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Min FMV</div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.min_fmv != null
+                      ? formatPrice(
+                          esppCloseSummaryData.min_fmv,
+                          selectedEsppPeriod?.stock_currency
+                        )
+                      : "-"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Purchase price</div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.purchase_price != null
+                      ? formatPrice(
+                          esppCloseSummaryData.purchase_price,
+                          selectedEsppPeriod?.stock_currency
+                        )
+                      : "-"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Shares purchased</div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.shares_purchased != null
+                      ? quantityFormatter.format(
+                          Number(esppCloseSummaryData.shares_purchased)
+                        )
+                      : "-"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Taxes paid</div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.taxes_paid != null
+                      ? formatMoney(
+                          esppCloseSummaryData.taxes_paid,
+                          selectedEsppPeriod?.stock_currency
+                        )
+                      : "-"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Shares withheld</div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.shares_withheld != null
+                      ? quantityFormatter.format(
+                          Number(esppCloseSummaryData.shares_withheld)
+                        )
+                      : "-"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Shares left</div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.shares_left != null
+                      ? quantityFormatter.format(
+                          Number(esppCloseSummaryData.shares_left)
+                        )
+                      : "-"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Paid with shares</div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.paid_with_shares != null
+                      ? formatMoney(
+                          esppCloseSummaryData.paid_with_shares,
+                          selectedEsppPeriod?.stock_currency
+                        )
+                      : "-"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">
+                    Refunded from taxes
+                  </div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.refunded_from_taxes != null
+                      ? formatMoney(
+                          esppCloseSummaryData.refunded_from_taxes,
+                          selectedEsppPeriod?.stock_currency
+                        )
+                      : "-"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Unused for shares</div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.unused_for_shares != null
+                      ? formatMoney(
+                          esppCloseSummaryData.unused_for_shares,
+                          selectedEsppPeriod?.stock_currency
+                        )
+                      : "-"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Total refunded</div>
+                  <div className="text-slate-900">
+                    {esppCloseSummaryData?.total_refunded != null
+                      ? formatMoney(
+                          esppCloseSummaryData.total_refunded,
+                          selectedEsppPeriod?.stock_currency
+                        )
+                      : "-"}
+                  </div>
+                </div>
+              </div>
+            </div>
+            {esppCloseError ? (
+              <p className="text-sm text-rose-600">{esppCloseError}</p>
+            ) : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={closeEsppCloseModal}
+                  disabled={esppCloseSaving}
+                >
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button type="submit" disabled={esppCloseSaving}>
+                Close period
               </Button>
             </DialogFooter>
           </form>
