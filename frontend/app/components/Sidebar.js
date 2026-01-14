@@ -11,6 +11,7 @@ const navItems = [
   { href: "/transactions", label: "Transactions", icon: TransactionsIcon },
   { href: "/recurring", label: "Recurring schedules", icon: CalendarIcon },
   { href: "/investments", label: "Investments", icon: InvestmentsIcon },
+  { href: "/espp", label: "ESPP", icon: EsppIcon },
   { href: "/budget", label: "Settings", icon: SettingsIcon }
 ];
 
@@ -157,6 +158,25 @@ function InvestmentsIcon({ className }) {
     >
       <path d="M4 16l5-5 4 4 7-7" />
       <path d="M3 20h18" />
+    </svg>
+  );
+}
+
+function EsppIcon({ className }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M4 7h16" />
+      <path d="M4 12h16" />
+      <path d="M4 17h10" />
+      <path d="M16 17l3 3 3-3" />
     </svg>
   );
 }

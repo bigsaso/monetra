@@ -157,7 +157,8 @@ const buildEmptySellForm = (dateValue) => ({
   investment_type: "sell"
 });
 
-export default function InvestmentsClient() {
+export default function InvestmentsClient({ view = "investments" }) {
+  const isEsppView = view === "espp";
   const [positions, setPositions] = useState([]);
   const [activity, setActivity] = useState([]);
   const [homeCurrency, setHomeCurrency] = useState("USD");
@@ -682,6 +683,9 @@ export default function InvestmentsClient() {
   };
 
   useEffect(() => {
+    if (!isEsppView) {
+      return;
+    }
     if (typeof window === "undefined") {
       return;
     }
@@ -698,25 +702,34 @@ export default function InvestmentsClient() {
       // eslint-disable-next-line no-console
       console.error(err);
     }
-  }, []);
+  }, [isEsppView]);
 
   useEffect(() => {
+    loadHomeCurrency();
+    if (isEsppView) {
+      loadEsppPeriods();
+      return;
+    }
     loadPositions();
     loadActivity();
     loadRealized();
-    loadHomeCurrency();
-    loadEsppPeriods();
-  }, []);
+  }, [isEsppView]);
 
   useEffect(() => {
+    if (!isEsppView) {
+      return;
+    }
     if (!selectedEsppPeriodId) {
       setEsppDeposits([]);
       return;
     }
     loadEsppDeposits(selectedEsppPeriodId);
-  }, [selectedEsppPeriodId]);
+  }, [isEsppView, selectedEsppPeriodId]);
 
   useEffect(() => {
+    if (!isEsppView) {
+      return;
+    }
     if (!selectedEsppPeriodId || selectedEsppPeriod?.status !== "open") {
       return;
     }
@@ -732,6 +745,7 @@ export default function InvestmentsClient() {
       }
     };
   }, [
+    isEsppView,
     selectedEsppPeriodId,
     selectedEsppPeriod?.status,
     esppSummaryInputsForPeriod,
@@ -739,6 +753,9 @@ export default function InvestmentsClient() {
   ]);
 
   useEffect(() => {
+    if (!isEsppView) {
+      return;
+    }
     if (
       !esppCloseModalOpen ||
       !selectedEsppPeriodId ||
@@ -758,6 +775,7 @@ export default function InvestmentsClient() {
       }
     };
   }, [
+    isEsppView,
     esppCloseModalOpen,
     selectedEsppPeriodId,
     selectedEsppPeriod?.status,
@@ -765,6 +783,9 @@ export default function InvestmentsClient() {
   ]);
 
   useEffect(() => {
+    if (!isEsppView) {
+      return;
+    }
     if (!selectedEsppPeriodId || selectedEsppPeriod?.status !== "closed") {
       setEsppMarketQuote(null);
       setEsppFxRate(null);
@@ -852,6 +873,7 @@ export default function InvestmentsClient() {
       clearInterval(interval);
     };
   }, [
+    isEsppView,
     homeCurrency,
     selectedEsppPeriod?.status,
     selectedEsppPeriod?.stock_currency,
@@ -1506,8 +1528,10 @@ export default function InvestmentsClient() {
 
   useEffect(() => {
     loadAccounts();
-    loadCategories();
-  }, []);
+    if (!isEsppView) {
+      loadCategories();
+    }
+  }, [isEsppView]);
 
   useEffect(() => {
     if (!sellModalOpen) {
@@ -1525,6 +1549,9 @@ export default function InvestmentsClient() {
   }, [accounts, categories, sellForm.account_id, sellForm.category, sellModalOpen]);
 
   useEffect(() => {
+    if (!isEsppView) {
+      return;
+    }
     if (!esppCloseModalOpen) {
       return;
     }
@@ -1534,7 +1561,7 @@ export default function InvestmentsClient() {
         account_id: String(accounts[0].id)
       }));
     }
-  }, [accounts, esppCloseForm.account_id, esppCloseModalOpen]);
+  }, [accounts, esppCloseForm.account_id, esppCloseModalOpen, isEsppView]);
 
   useEffect(() => {
     setActivityPage((prev) => {
@@ -1554,77 +1581,82 @@ export default function InvestmentsClient() {
         <Link href="/">← Back to dashboard</Link>
       </Button>
       <h1 className="mt-4 text-3xl font-semibold text-slate-900">
-        Investment assets
+        {isEsppView ? "ESPP" : "Investment assets"}
       </h1>
       <p className="mt-2 text-sm text-slate-500">
-        Maintain the holdings you track and map to investment expenses.
+        {isEsppView
+          ? "Track employee stock purchase plan periods, contributions, and closing summaries."
+          : "Maintain the holdings you track and map to investment expenses."}
       </p>
 
       <div className="mt-8 grid gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Add investment</CardTitle>
-            <CardDescription>Store the tickers and asset types you track.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="grid gap-4">
-              <label className="text-sm text-slate-600">
-                Name
-                <input
-                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                  name="name"
-                  value={form.name}
-                  onChange={handleChange}
-                  required
-                />
-              </label>
-              <label className="text-sm text-slate-600">
-                Symbol
-                <input
-                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                  name="symbol"
-                  value={form.symbol}
-                  onChange={handleChange}
-                  placeholder="Optional"
-                />
-              </label>
-              <label className="text-sm text-slate-600">
-                Asset type
-                <select
-                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                  name="asset_type"
-                  value={form.asset_type}
-                  onChange={handleChange}
-                >
-                  {assetTypeOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="flex flex-wrap gap-2">
-                <Button type="submit" disabled={saving}>
-                  Add investment
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+        {!isEsppView ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Add investment</CardTitle>
+              <CardDescription>Store the tickers and asset types you track.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmit} className="grid gap-4">
+                <label className="text-sm text-slate-600">
+                  Name
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="name"
+                    value={form.name}
+                    onChange={handleChange}
+                    required
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  Symbol
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="symbol"
+                    value={form.symbol}
+                    onChange={handleChange}
+                    placeholder="Optional"
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  Asset type
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="asset_type"
+                    value={form.asset_type}
+                    onChange={handleChange}
+                  >
+                    {assetTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" disabled={saving}>
+                    Add investment
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        ) : null}
 
-        <Card>
-          <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <CardTitle>ESPP periods</CardTitle>
-              <CardDescription>
-                Track the 13 biweekly contributions for each offering.
-              </CardDescription>
-            </div>
-            <Button type="button" variant="outline" onClick={openEsppModal}>
-              Start new ESPP period
-            </Button>
-          </CardHeader>
-          <CardContent className="grid gap-4">
+        {isEsppView ? (
+          <Card>
+            <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <CardTitle>ESPP periods</CardTitle>
+                <CardDescription>
+                  Track the 13 biweekly contributions for each offering.
+                </CardDescription>
+              </div>
+              <Button type="button" variant="outline" onClick={openEsppModal}>
+                Start new ESPP period
+              </Button>
+            </CardHeader>
+            <CardContent className="grid gap-4">
             {esppPeriodsLoading ? <p>Loading ESPP periods...</p> : null}
             {esppPeriodsError ? (
               <p className="text-sm text-rose-600">{esppPeriodsError}</p>
@@ -2074,88 +2106,101 @@ export default function InvestmentsClient() {
                 ) : null}
               </>
             ) : null}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ) : null}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Current holdings</CardTitle>
-            <CardDescription>Holdings based on weighted average cost.</CardDescription>
-          </CardHeader>
-          <CardContent className="overflow-x-auto md:overflow-visible">
-            {loading ? <p>Loading positions...</p> : null}
-            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-            {!loading && positions.length === 0 ? (
-              <p>No investment positions yet.</p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Investment</TableHead>
-                    <TableHead className="text-right">Shares</TableHead>
-                    <TableHead className="text-right">Avg cost</TableHead>
-                    <TableHead className="text-right">Cost basis</TableHead>
-                    <TableHead>Currency</TableHead>
-                    <TableHead>Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {positions.map((position) => (
-                    <TableRow key={position.id}>
-                      <TableCell>
-                        <div className="font-medium text-slate-900">
-                          {position.name}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {position.symbol || "-"}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {quantityFormatter.format(Number(position.total_shares || 0))}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {formatMoney(position.average_cost_per_share, position.currency)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {formatMoney(position.total_cost_basis, position.currency)}
-                      </TableCell>
-                      <TableCell>{position.currency || "-"}</TableCell>
-                      <TableCell>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => openSellModal(position)}
-                        >
-                          Sell
-                        </Button>
-                      </TableCell>
+        {!isEsppView ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Current holdings</CardTitle>
+              <CardDescription>Holdings based on weighted average cost.</CardDescription>
+            </CardHeader>
+            <CardContent className="overflow-x-auto md:overflow-visible">
+              {loading ? <p>Loading positions...</p> : null}
+              {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+              {!loading && positions.length === 0 ? (
+                <p>No investment positions yet.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Investment</TableHead>
+                      <TableHead className="text-right">Shares</TableHead>
+                      <TableHead className="text-right">Avg cost</TableHead>
+                      <TableHead className="text-right">Cost basis</TableHead>
+                      <TableHead>Currency</TableHead>
+                      <TableHead>Action</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {positions.map((position) => (
+                      <TableRow key={position.id}>
+                        <TableCell>
+                          <div className="font-medium text-slate-900">
+                            {position.name}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {position.symbol || "-"}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {quantityFormatter.format(
+                            Number(position.total_shares || 0)
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatMoney(
+                            position.average_cost_per_share,
+                            position.currency
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatMoney(position.total_cost_basis, position.currency)}
+                        </TableCell>
+                        <TableCell>{position.currency || "-"}</TableCell>
+                        <TableCell>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => openSellModal(position)}
+                          >
+                            Sell
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        ) : null}
 
-        <RealizedInvestmentsCard
-          realized={realized}
-          loading={realizedLoading}
-          error={realizedError}
-          onConvert={handleConvertOpen}
-          onTransactionSelect={handleRealizedTransactionOpen}
-          convertDisabled={convertSaving}
-          homeCurrency={homeCurrency}
-          formatMoney={formatMoney}
-          quantityFormatter={quantityFormatter}
-          isForeignCurrency={isForeignCurrency}
-        />
+        {!isEsppView ? (
+          <RealizedInvestmentsCard
+            realized={realized}
+            loading={realizedLoading}
+            error={realizedError}
+            onConvert={handleConvertOpen}
+            onTransactionSelect={handleRealizedTransactionOpen}
+            convertDisabled={convertSaving}
+            homeCurrency={homeCurrency}
+            formatMoney={formatMoney}
+            quantityFormatter={quantityFormatter}
+            isForeignCurrency={isForeignCurrency}
+          />
+        ) : null}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Investment activity</CardTitle>
-            <CardDescription>Review buy and sell activity tied to transactions.</CardDescription>
-          </CardHeader>
-          <CardContent className="overflow-x-auto md:overflow-visible">
+        {!isEsppView ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Investment activity</CardTitle>
+              <CardDescription>
+                Review buy and sell activity tied to transactions.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="overflow-x-auto md:overflow-visible">
             {activity.length > 0 ? (
               <>
                 <div className="mb-4 flex flex-wrap items-center gap-4 text-sm text-slate-600">
@@ -2277,538 +2322,554 @@ export default function InvestmentsClient() {
                 </TableBody>
               </Table>
             ) : null}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
-      <Dialog
-        open={esppModalOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEsppModalOpen(false);
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-[520px]">
-          <DialogHeader>
-            <DialogTitle>Start a new ESPP period</DialogTitle>
-            <DialogDescription>
-              Capture the basics to create 13 biweekly deposit slots.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleEsppCreate} className="grid gap-3">
-            <label className="text-sm text-slate-600">
-              Period name
-              <input
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="name"
-                value={esppForm.name}
-                onChange={handleEsppFormChange}
-                required
-              />
-            </label>
-            <label className="text-sm text-slate-600">
-              Start date
-              <input
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="start_date"
-                type="date"
-                value={esppForm.start_date}
-                onChange={handleEsppFormChange}
-                required
-              />
-            </label>
-            <label className="text-sm text-slate-600">
-              Stock ticker
-              <input
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="stock_ticker"
-                value={esppForm.stock_ticker}
-                onChange={handleEsppFormChange}
-                required
-              />
-            </label>
-            <label className="text-sm text-slate-600">
-              Stock currency
-              <select
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="stock_currency"
-                value={esppForm.stock_currency}
-                onChange={handleEsppFormChange}
-                required
-              >
-                {CURRENCY_OPTIONS.filter((option) => option.value).map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {esppFormError ? (
-              <p className="text-sm text-rose-600">{esppFormError}</p>
-            ) : null}
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setEsppModalOpen(false)}
-                  disabled={esppSaving}
-                >
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button type="submit" disabled={esppSaving}>
-                Create period
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <Dialog
-        open={esppCloseModalOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeEsppCloseModal();
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-[560px] max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Close ESPP period</DialogTitle>
-            <DialogDescription>
-              Confirm the purchase details and create the ESPP investment entry.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleEsppCloseSubmit} className="grid gap-4">
-            <label className="text-sm text-slate-600">
-              Account
-              <select
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="account_id"
-                value={esppCloseForm.account_id}
-                onChange={handleEsppCloseInputChange}
-                required
-              >
-                <option value="">Select an account</option>
-                {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.name} • {account.type}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="grid gap-3 md:grid-cols-3">
+      {isEsppView ? (
+        <Dialog
+          open={esppModalOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              setEsppModalOpen(false);
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-[520px]">
+            <DialogHeader>
+              <DialogTitle>Start a new ESPP period</DialogTitle>
+              <DialogDescription>
+                Capture the basics to create 13 biweekly deposit slots.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleEsppCreate} className="grid gap-3">
               <label className="text-sm text-slate-600">
-                Open FMV ({selectedEsppPeriod?.stock_currency})
-                <input
-                  className="mt-1 w-full rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                  type="number"
-                  step="0.00001"
-                  min="0"
-                  name="open_fmv"
-                  value={esppCloseForm.open_fmv}
-                  onChange={handleEsppCloseInputChange}
-                  readOnly
-                />
-              </label>
-              <label className="text-sm text-slate-600">
-                Close FMV ({selectedEsppPeriod?.stock_currency})
+                Period name
                 <input
                   className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                  type="number"
-                  step="0.00001"
-                  min="0"
-                  name="close_fmv"
-                  value={esppCloseForm.close_fmv}
-                  onChange={handleEsppCloseInputChange}
+                  name="name"
+                  value={esppForm.name}
+                  onChange={handleEsppFormChange}
                   required
                 />
               </label>
               <label className="text-sm text-slate-600">
-                Exchange rate ({homeCurrency} → {selectedEsppPeriod?.stock_currency})
+                Start date
                 <input
                   className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                  type="number"
-                  step="0.000001"
-                  min="0"
-                  name="exchange_rate"
-                  value={esppCloseForm.exchange_rate}
-                  onChange={handleEsppCloseInputChange}
+                  name="start_date"
+                  type="date"
+                  value={esppForm.start_date}
+                  onChange={handleEsppFormChange}
                   required
                 />
               </label>
-            </div>
-            <div className="rounded-md border border-slate-200 bg-white px-3 py-3 text-sm">
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>Calculated summary</span>
-                {esppCloseLoading ? <span>Updating...</span> : null}
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <div>
-                  <div className="text-xs text-slate-500">
-                    Total invested ({homeCurrency})
-                  </div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.total_invested_home != null
-                      ? formatMoney(
-                          esppCloseSummaryData.total_invested_home,
-                          homeCurrency
-                        )
-                      : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">
-                    Total invested ({selectedEsppPeriod?.stock_currency})
-                  </div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.total_invested_stock_currency != null
-                      ? formatMoney(
-                          esppCloseSummaryData.total_invested_stock_currency,
-                          selectedEsppPeriod?.stock_currency
-                        )
-                      : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">Min FMV</div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.min_fmv != null
-                      ? formatPrice(
-                          esppCloseSummaryData.min_fmv,
-                          selectedEsppPeriod?.stock_currency
-                        )
-                      : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">Purchase price</div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.purchase_price != null
-                      ? formatPrice(
-                          esppCloseSummaryData.purchase_price,
-                          selectedEsppPeriod?.stock_currency
-                        )
-                      : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">Shares purchased</div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.shares_purchased != null
-                      ? quantityFormatter.format(
-                          Number(esppCloseSummaryData.shares_purchased)
-                        )
-                      : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">Taxes paid</div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.taxes_paid != null
-                      ? formatMoney(
-                          esppCloseSummaryData.taxes_paid,
-                          selectedEsppPeriod?.stock_currency
-                        )
-                      : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">Shares withheld</div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.shares_withheld != null
-                      ? quantityFormatter.format(
-                          Number(esppCloseSummaryData.shares_withheld)
-                        )
-                      : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">Shares left</div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.shares_left != null
-                      ? quantityFormatter.format(
-                          Number(esppCloseSummaryData.shares_left)
-                        )
-                      : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">Paid with shares</div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.paid_with_shares != null
-                      ? formatMoney(
-                          esppCloseSummaryData.paid_with_shares,
-                          selectedEsppPeriod?.stock_currency
-                        )
-                      : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">
-                    Refunded from taxes
-                  </div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.refunded_from_taxes != null
-                      ? formatMoney(
-                          esppCloseSummaryData.refunded_from_taxes,
-                          selectedEsppPeriod?.stock_currency
-                        )
-                      : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">Unused for shares</div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.unused_for_shares != null
-                      ? formatMoney(
-                          esppCloseSummaryData.unused_for_shares,
-                          selectedEsppPeriod?.stock_currency
-                        )
-                      : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">Total refunded</div>
-                  <div className="text-slate-900">
-                    {esppCloseSummaryData?.total_refunded != null
-                      ? formatMoney(
-                          esppCloseSummaryData.total_refunded,
-                          selectedEsppPeriod?.stock_currency
-                        )
-                      : "-"}
-                  </div>
-                </div>
-              </div>
-            </div>
-            {esppCloseError ? (
-              <p className="text-sm text-rose-600">{esppCloseError}</p>
-            ) : null}
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={closeEsppCloseModal}
-                  disabled={esppCloseSaving}
+              <label className="text-sm text-slate-600">
+                Stock ticker
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="stock_ticker"
+                  value={esppForm.stock_ticker}
+                  onChange={handleEsppFormChange}
+                  required
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                Stock currency
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="stock_currency"
+                  value={esppForm.stock_currency}
+                  onChange={handleEsppFormChange}
+                  required
                 >
-                  Cancel
+                  {CURRENCY_OPTIONS.filter((option) => option.value).map(
+                    (option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+              {esppFormError ? (
+                <p className="text-sm text-rose-600">{esppFormError}</p>
+              ) : null}
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setEsppModalOpen(false)}
+                    disabled={esppSaving}
+                  >
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button type="submit" disabled={esppSaving}>
+                  Create period
                 </Button>
-              </DialogClose>
-              <Button type="submit" disabled={esppCloseSaving}>
-                Close period
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <Dialog
-        open={Boolean(convertTarget)}
-        onOpenChange={(open) => {
-          if (!open) {
-            handleConvertClose();
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-[480px]">
-          <DialogHeader>
-            <DialogTitle>Convert to {homeCurrency}</DialogTitle>
-            <DialogDescription>
-              This updates the linked transaction amount and currency.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleConvertSubmit} className="grid gap-4">
-            <label className="text-sm text-slate-600">
-              Conversion date
-              <input
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                type="date"
-                value={convertDate}
-                onChange={(event) => setConvertDate(event.target.value)}
-                required
-              />
-            </label>
-            {convertError ? (
-              <p className="text-sm text-rose-600">{convertError}</p>
-            ) : null}
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleConvertClose}
-                  disabled={convertSaving}
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+      {isEsppView ? (
+        <Dialog
+          open={esppCloseModalOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              closeEsppCloseModal();
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-[560px] max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Close ESPP period</DialogTitle>
+              <DialogDescription>
+                Confirm the purchase details and create the ESPP investment entry.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleEsppCloseSubmit} className="grid gap-4">
+              <label className="text-sm text-slate-600">
+                Account
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="account_id"
+                  value={esppCloseForm.account_id}
+                  onChange={handleEsppCloseInputChange}
+                  required
                 >
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button type="submit" disabled={convertSaving}>
-                Convert
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <Dialog
-        open={sellModalOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeSellModal();
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-[520px] max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Sell {sellTarget?.name || "investment"}</DialogTitle>
-            <DialogDescription>
-              Record a sell transaction for this holding.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSellSubmit} className="grid gap-3">
-            <label className="text-sm text-slate-600">
-              Account
-              <select
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="account_id"
-                value={sellForm.account_id}
-                onChange={handleSellChange}
-              >
-                <option value="">Select account</option>
-                {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {accountsError ? (
-              <p className="text-sm text-rose-600">{accountsError}</p>
-            ) : null}
-            <label className="text-sm text-slate-600">
-              Total amount
-              <input
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="amount"
-                type="number"
-                step="0.01"
-                min="0.01"
-                value={sellForm.amount}
-                onChange={handleSellChange}
-                required
-              />
-            </label>
-            <label className="text-sm text-slate-600">
-              Currency
-              <select
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="currency"
-                value={sellForm.currency}
-                onChange={handleSellChange}
-              >
-                {CURRENCY_OPTIONS.map((option) => (
-                  <option key={option.value || "default"} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm text-slate-600">
-              Investment category
-              <select
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="category"
-                value={sellForm.category}
-                onChange={handleSellChange}
-              >
-                <option value="">Select category</option>
-                {categories
-                  .filter((category) => category.group === "investments")
-                  .map((category) => (
-                    <option key={category.id} value={category.name}>
-                      {category.name}
+                  <option value="">Select an account</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name} • {account.type}
                     </option>
                   ))}
-              </select>
-            </label>
-            {categoriesError ? (
-              <p className="text-sm text-rose-600">{categoriesError}</p>
-            ) : null}
-            <label className="text-sm text-slate-600">
-              Quantity
-              <input
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="quantity"
-                type="number"
-                step="0.0001"
-                min="0"
-                value={sellForm.quantity}
-                onChange={handleSellChange}
-                required
-              />
-            </label>
-            <label className="text-sm text-slate-600">
-              Sell price per share
-              <input
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="price"
-                type="number"
-                step="0.00001"
-                min="0"
-                value={sellForm.price}
-                onChange={handleSellChange}
-                required
-              />
-            </label>
-            <label className="text-sm text-slate-600">
-              Sell date
-              <input
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="date"
-                type="date"
-                value={sellForm.date}
-                onChange={handleSellChange}
-                required
-              />
-            </label>
-            <label className="text-sm text-slate-600">
-              Notes
-              <input
-                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                name="notes"
-                value={sellForm.notes}
-                onChange={handleSellChange}
-                placeholder="Optional"
-              />
-            </label>
-            {sellError ? (
-              <p className="text-sm text-rose-600">{sellError}</p>
-            ) : null}
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button type="button" variant="outline" onClick={closeSellModal}>
-                  Cancel
+                </select>
+              </label>
+              <div className="grid gap-3 md:grid-cols-3">
+                <label className="text-sm text-slate-600">
+                  Open FMV ({selectedEsppPeriod?.stock_currency})
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    type="number"
+                    step="0.00001"
+                    min="0"
+                    name="open_fmv"
+                    value={esppCloseForm.open_fmv}
+                    onChange={handleEsppCloseInputChange}
+                    readOnly
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  Close FMV ({selectedEsppPeriod?.stock_currency})
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    type="number"
+                    step="0.00001"
+                    min="0"
+                    name="close_fmv"
+                    value={esppCloseForm.close_fmv}
+                    onChange={handleEsppCloseInputChange}
+                    required
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  Exchange rate ({homeCurrency} →{" "}
+                  {selectedEsppPeriod?.stock_currency})
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    name="exchange_rate"
+                    value={esppCloseForm.exchange_rate}
+                    onChange={handleEsppCloseInputChange}
+                    required
+                  />
+                </label>
+              </div>
+              <div className="rounded-md border border-slate-200 bg-white px-3 py-3 text-sm">
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                  <span>Calculated summary</span>
+                  {esppCloseLoading ? <span>Updating...</span> : null}
+                </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div>
+                    <div className="text-xs text-slate-500">
+                      Total invested ({homeCurrency})
+                    </div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.total_invested_home != null
+                        ? formatMoney(
+                            esppCloseSummaryData.total_invested_home,
+                            homeCurrency
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">
+                      Total invested ({selectedEsppPeriod?.stock_currency})
+                    </div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.total_invested_stock_currency !=
+                      null
+                        ? formatMoney(
+                            esppCloseSummaryData.total_invested_stock_currency,
+                            selectedEsppPeriod?.stock_currency
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Min FMV</div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.min_fmv != null
+                        ? formatPrice(
+                            esppCloseSummaryData.min_fmv,
+                            selectedEsppPeriod?.stock_currency
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Purchase price</div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.purchase_price != null
+                        ? formatPrice(
+                            esppCloseSummaryData.purchase_price,
+                            selectedEsppPeriod?.stock_currency
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Shares purchased</div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.shares_purchased != null
+                        ? quantityFormatter.format(
+                            Number(esppCloseSummaryData.shares_purchased)
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Taxes paid</div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.taxes_paid != null
+                        ? formatMoney(
+                            esppCloseSummaryData.taxes_paid,
+                            selectedEsppPeriod?.stock_currency
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Shares withheld</div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.shares_withheld != null
+                        ? quantityFormatter.format(
+                            Number(esppCloseSummaryData.shares_withheld)
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Shares left</div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.shares_left != null
+                        ? quantityFormatter.format(
+                            Number(esppCloseSummaryData.shares_left)
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Paid with shares</div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.paid_with_shares != null
+                        ? formatMoney(
+                            esppCloseSummaryData.paid_with_shares,
+                            selectedEsppPeriod?.stock_currency
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">
+                      Refunded from taxes
+                    </div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.refunded_from_taxes != null
+                        ? formatMoney(
+                            esppCloseSummaryData.refunded_from_taxes,
+                            selectedEsppPeriod?.stock_currency
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Unused for shares</div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.unused_for_shares != null
+                        ? formatMoney(
+                            esppCloseSummaryData.unused_for_shares,
+                            selectedEsppPeriod?.stock_currency
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Total refunded</div>
+                    <div className="text-slate-900">
+                      {esppCloseSummaryData?.total_refunded != null
+                        ? formatMoney(
+                            esppCloseSummaryData.total_refunded,
+                            selectedEsppPeriod?.stock_currency
+                          )
+                        : "-"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {esppCloseError ? (
+                <p className="text-sm text-rose-600">{esppCloseError}</p>
+              ) : null}
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={closeEsppCloseModal}
+                    disabled={esppCloseSaving}
+                  >
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button type="submit" disabled={esppCloseSaving}>
+                  Close period
                 </Button>
-              </DialogClose>
-              <Button type="submit" disabled={sellSaving || accounts.length === 0}>
-                {sellSaving ? "Saving..." : "Record sell"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <TransactionDetailModal
-        open={transactionModalOpen}
-        onClose={closeTransactionModal}
-        transactionId={selectedTransactionId}
-        transaction={selectedTransaction}
-        investmentLabel={selectedTransactionInvestment}
-        loading={
-          transactionLookupLoading &&
-          Boolean(selectedTransactionId) &&
-          !transactionLookup?.[selectedTransactionId]
-        }
-        error={transactionLookupError}
-      />
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+      {!isEsppView ? (
+        <>
+          <Dialog
+            open={Boolean(convertTarget)}
+            onOpenChange={(open) => {
+              if (!open) {
+                handleConvertClose();
+              }
+            }}
+          >
+            <DialogContent className="sm:max-w-[480px]">
+              <DialogHeader>
+                <DialogTitle>Convert to {homeCurrency}</DialogTitle>
+                <DialogDescription>
+                  This updates the linked transaction amount and currency.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleConvertSubmit} className="grid gap-4">
+                <label className="text-sm text-slate-600">
+                  Conversion date
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    type="date"
+                    value={convertDate}
+                    onChange={(event) => setConvertDate(event.target.value)}
+                    required
+                  />
+                </label>
+                {convertError ? (
+                  <p className="text-sm text-rose-600">{convertError}</p>
+                ) : null}
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleConvertClose}
+                      disabled={convertSaving}
+                    >
+                      Cancel
+                    </Button>
+                  </DialogClose>
+                  <Button type="submit" disabled={convertSaving}>
+                    Convert
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+          <Dialog
+            open={sellModalOpen}
+            onOpenChange={(open) => {
+              if (!open) {
+                closeSellModal();
+              }
+            }}
+          >
+            <DialogContent className="sm:max-w-[520px] max-h-[85vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Sell {sellTarget?.name || "investment"}</DialogTitle>
+                <DialogDescription>
+                  Record a sell transaction for this holding.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleSellSubmit} className="grid gap-3">
+                <label className="text-sm text-slate-600">
+                  Account
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="account_id"
+                    value={sellForm.account_id}
+                    onChange={handleSellChange}
+                  >
+                    <option value="">Select account</option>
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {accountsError ? (
+                  <p className="text-sm text-rose-600">{accountsError}</p>
+                ) : null}
+                <label className="text-sm text-slate-600">
+                  Total amount
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="amount"
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={sellForm.amount}
+                    onChange={handleSellChange}
+                    required
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  Currency
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="currency"
+                    value={sellForm.currency}
+                    onChange={handleSellChange}
+                  >
+                    {CURRENCY_OPTIONS.map((option) => (
+                      <option key={option.value || "default"} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm text-slate-600">
+                  Investment category
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="category"
+                    value={sellForm.category}
+                    onChange={handleSellChange}
+                  >
+                    <option value="">Select category</option>
+                    {categories
+                      .filter((category) => category.group === "investments")
+                      .map((category) => (
+                        <option key={category.id} value={category.name}>
+                          {category.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                {categoriesError ? (
+                  <p className="text-sm text-rose-600">{categoriesError}</p>
+                ) : null}
+                <label className="text-sm text-slate-600">
+                  Quantity
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="quantity"
+                    type="number"
+                    step="0.0001"
+                    min="0"
+                    value={sellForm.quantity}
+                    onChange={handleSellChange}
+                    required
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  Sell price per share
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="price"
+                    type="number"
+                    step="0.00001"
+                    min="0"
+                    value={sellForm.price}
+                    onChange={handleSellChange}
+                    required
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  Sell date
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="date"
+                    type="date"
+                    value={sellForm.date}
+                    onChange={handleSellChange}
+                    required
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  Notes
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                    name="notes"
+                    value={sellForm.notes}
+                    onChange={handleSellChange}
+                    placeholder="Optional"
+                  />
+                </label>
+                {sellError ? (
+                  <p className="text-sm text-rose-600">{sellError}</p>
+                ) : null}
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button type="button" variant="outline" onClick={closeSellModal}>
+                      Cancel
+                    </Button>
+                  </DialogClose>
+                  <Button
+                    type="submit"
+                    disabled={sellSaving || accounts.length === 0}
+                  >
+                    {sellSaving ? "Saving..." : "Record sell"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+          <TransactionDetailModal
+            open={transactionModalOpen}
+            onClose={closeTransactionModal}
+            transactionId={selectedTransactionId}
+            transaction={selectedTransaction}
+            investmentLabel={selectedTransactionInvestment}
+            loading={
+              transactionLookupLoading &&
+              Boolean(selectedTransactionId) &&
+              !transactionLookup?.[selectedTransactionId]
+            }
+            error={transactionLookupError}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
