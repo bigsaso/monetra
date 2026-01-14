@@ -71,6 +71,27 @@ const formatMoney = (value, currency) => {
   }
 };
 
+const formatPrice = (value, currency) => {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) {
+    return "-";
+  }
+  const normalizedCurrency = normalizeCurrencyValue(currency);
+  if (!normalizedCurrency) {
+    return amount.toFixed(5);
+  }
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: normalizedCurrency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 5
+    }).format(amount);
+  } catch (err) {
+    return `${amount.toFixed(5)} ${normalizedCurrency}`;
+  }
+};
+
 const parseDateValue = (value) => {
   if (!value) {
     return null;
@@ -95,6 +116,11 @@ const formatShortDate = (value) => {
     day: "numeric",
     year: "numeric"
   });
+};
+
+const parseNumberInput = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const buildEsppSchedule = (startDate) => {
@@ -144,6 +170,10 @@ export default function InvestmentsClient() {
   const [esppFormError, setEsppFormError] = useState("");
   const [esppSaving, setEsppSaving] = useState(false);
   const [esppDepositSaving, setEsppDepositSaving] = useState({});
+  const [esppSummaryInputs, setEsppSummaryInputs] = useState({});
+  const [esppSummary, setEsppSummary] = useState({});
+  const [esppSummaryLoading, setEsppSummaryLoading] = useState(false);
+  const [esppSummaryError, setEsppSummaryError] = useState("");
   const [form, setForm] = useState(emptyForm);
   const [realized, setRealized] = useState([]);
   const [realizedLoading, setRealizedLoading] = useState(true);
@@ -178,6 +208,7 @@ export default function InvestmentsClient() {
   const [selectedTransactionInvestment, setSelectedTransactionInvestment] = useState("");
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const esppSaveTimers = useRef({});
+  const esppSummaryTimer = useRef(null);
 
   const currencyFormatter = useMemo(
     () =>
@@ -252,6 +283,24 @@ export default function InvestmentsClient() {
       };
     });
   }, [esppDeposits, esppSchedule, selectedEsppPeriod]);
+
+  const esppSummaryInputsForPeriod = useMemo(() => {
+    const defaults = { open_fmv: "", close_fmv: "", exchange_rate: "" };
+    if (!selectedEsppPeriodId) {
+      return defaults;
+    }
+    return {
+      ...defaults,
+      ...(esppSummaryInputs[selectedEsppPeriodId] || {})
+    };
+  }, [esppSummaryInputs, selectedEsppPeriodId]);
+
+  const esppSummaryData = useMemo(() => {
+    if (!selectedEsppPeriodId) {
+      return null;
+    }
+    return esppSummary[selectedEsppPeriodId] || null;
+  }, [esppSummary, selectedEsppPeriodId]);
 
   const filteredActivity = useMemo(() => {
     if (activityInvestmentFilter === "all") {
@@ -440,6 +489,36 @@ export default function InvestmentsClient() {
     }
   };
 
+  const loadEsppSummary = async (periodId, inputs) => {
+    if (!periodId) {
+      return;
+    }
+    setEsppSummaryLoading(true);
+    setEsppSummaryError("");
+    try {
+      const payload = {
+        open_fmv: parseNumberInput(inputs.open_fmv),
+        close_fmv: parseNumberInput(inputs.close_fmv),
+        exchange_rate: parseNumberInput(inputs.exchange_rate)
+      };
+      const response = await fetch(`/api/espp-periods/${periodId}/summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load ESPP summary.");
+      }
+      const data = await response.json();
+      setEsppSummary((prev) => ({ ...prev, [periodId]: data }));
+    } catch (err) {
+      setEsppSummaryError(err.message);
+    } finally {
+      setEsppSummaryLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadPositions();
     loadActivity();
@@ -456,11 +535,36 @@ export default function InvestmentsClient() {
     loadEsppDeposits(selectedEsppPeriodId);
   }, [selectedEsppPeriodId]);
 
+  useEffect(() => {
+    if (!selectedEsppPeriodId || selectedEsppPeriod?.status !== "open") {
+      return;
+    }
+    if (esppSummaryTimer.current) {
+      clearTimeout(esppSummaryTimer.current);
+    }
+    esppSummaryTimer.current = setTimeout(() => {
+      loadEsppSummary(selectedEsppPeriodId, esppSummaryInputsForPeriod);
+    }, 300);
+    return () => {
+      if (esppSummaryTimer.current) {
+        clearTimeout(esppSummaryTimer.current);
+      }
+    };
+  }, [
+    selectedEsppPeriodId,
+    selectedEsppPeriod?.status,
+    esppSummaryInputsForPeriod,
+    esppDeposits
+  ]);
+
   useEffect(
     () => () => {
       Object.values(esppSaveTimers.current).forEach((timer) =>
         clearTimeout(timer)
       );
+      if (esppSummaryTimer.current) {
+        clearTimeout(esppSummaryTimer.current);
+      }
     },
     []
   );
@@ -604,6 +708,20 @@ export default function InvestmentsClient() {
     esppSaveTimers.current[depositId] = setTimeout(() => {
       saveEsppDeposit(depositId, dateValue, normalizedAmount);
     }, 500);
+  };
+
+  const handleEsppSummaryInputChange = (event) => {
+    const { name, value } = event.target;
+    if (!selectedEsppPeriodId) {
+      return;
+    }
+    setEsppSummaryInputs((prev) => ({
+      ...prev,
+      [selectedEsppPeriodId]: {
+        ...prev[selectedEsppPeriodId],
+        [name]: value
+      }
+    }));
   };
 
   const buildInvestmentLabel = (name, symbol) => {
@@ -1085,53 +1203,269 @@ export default function InvestmentsClient() {
                   <p className="text-sm text-rose-600">{esppDepositsError}</p>
                 ) : null}
                 {!esppDepositsLoading && selectedEsppPeriod ? (
-                  <div className="overflow-x-auto rounded-md border border-slate-200">
-                    <div className="border-b border-slate-200 px-4 py-3 text-sm text-slate-500">
-                      13 biweekly deposits starting{" "}
-                      {formatShortDate(selectedEsppPeriod.start_date)}.
-                    </div>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Date</TableHead>
-                          <TableHead>Saved amount ({homeCurrency})</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {esppDepositRows.map((deposit) => (
-                          <TableRow key={`${deposit.date}-${deposit.id || "new"}`}>
-                            <TableCell>{formatShortDate(deposit.date)}</TableCell>
-                            <TableCell className="min-w-[200px]">
-                              <div className="flex flex-col gap-1">
-                                <input
-                                  className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={deposit.amount_input}
-                                  onChange={(event) =>
-                                    deposit.id
-                                      ? handleEsppDepositChange(
-                                          deposit.id,
-                                          deposit.date,
-                                          event.target.value
-                                        )
-                                      : null
-                                  }
-                                  disabled={!deposit.id}
-                                />
-                                {deposit.id && esppDepositSaving[deposit.id] ? (
-                                  <span className="text-xs text-slate-400">
-                                    Saving...
-                                  </span>
-                                ) : null}
-                              </div>
-                            </TableCell>
+                  <>
+                    <div className="overflow-x-auto rounded-md border border-slate-200">
+                      <div className="border-b border-slate-200 px-4 py-3 text-sm text-slate-500">
+                        13 biweekly deposits starting{" "}
+                        {formatShortDate(selectedEsppPeriod.start_date)}.
+                      </div>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Date</TableHead>
+                            <TableHead>Saved amount ({homeCurrency})</TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                        </TableHeader>
+                        <TableBody>
+                          {esppDepositRows.map((deposit) => (
+                            <TableRow key={`${deposit.date}-${deposit.id || "new"}`}>
+                              <TableCell>{formatShortDate(deposit.date)}</TableCell>
+                              <TableCell className="min-w-[200px]">
+                                <div className="flex flex-col gap-1">
+                                  <input
+                                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={deposit.amount_input}
+                                    onChange={(event) =>
+                                      deposit.id
+                                        ? handleEsppDepositChange(
+                                            deposit.id,
+                                            deposit.date,
+                                            event.target.value
+                                          )
+                                        : null
+                                    }
+                                    disabled={!deposit.id}
+                                  />
+                                  {deposit.id && esppDepositSaving[deposit.id] ? (
+                                    <span className="text-xs text-slate-400">
+                                      Saving...
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className="rounded-md border border-slate-200 bg-slate-50/70 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-700">
+                            ESPP summary (open period)
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            Enter FMVs and exchange rate to preview the purchase.
+                          </div>
+                        </div>
+                        {esppSummaryLoading ? (
+                          <span className="text-xs text-slate-400">
+                            Calculating...
+                          </span>
+                        ) : null}
+                      </div>
+                      {selectedEsppPeriod.status !== "open" ? (
+                        <p className="mt-3 text-sm text-slate-500">
+                          Summary is available only while the period is open.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="mt-4 grid gap-3 md:grid-cols-3">
+                            <label className="text-sm text-slate-600">
+                              Open FMV ({selectedEsppPeriod.stock_currency})
+                              <input
+                                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                                type="number"
+                                step="0.00001"
+                                min="0"
+                                name="open_fmv"
+                                value={esppSummaryInputsForPeriod.open_fmv}
+                                onChange={handleEsppSummaryInputChange}
+                              />
+                            </label>
+                            <label className="text-sm text-slate-600">
+                              Close FMV ({selectedEsppPeriod.stock_currency})
+                              <input
+                                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                                type="number"
+                                step="0.00001"
+                                min="0"
+                                name="close_fmv"
+                                value={esppSummaryInputsForPeriod.close_fmv}
+                                onChange={handleEsppSummaryInputChange}
+                              />
+                            </label>
+                            <label className="text-sm text-slate-600">
+                              Exchange rate ({homeCurrency} →{" "}
+                              {selectedEsppPeriod.stock_currency})
+                              <input
+                                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                                type="number"
+                                step="0.000001"
+                                min="0"
+                                name="exchange_rate"
+                                value={esppSummaryInputsForPeriod.exchange_rate}
+                                onChange={handleEsppSummaryInputChange}
+                              />
+                            </label>
+                          </div>
+                          <div className="mt-4 grid gap-3 md:grid-cols-2">
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                Total invested ({homeCurrency})
+                              </div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.total_invested_home != null
+                                  ? formatMoney(
+                                      esppSummaryData.total_invested_home,
+                                      homeCurrency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                Total invested ({selectedEsppPeriod.stock_currency})
+                              </div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.total_invested_stock_currency != null
+                                  ? formatMoney(
+                                      esppSummaryData.total_invested_stock_currency,
+                                      selectedEsppPeriod.stock_currency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                Min FMV
+                              </div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.min_fmv != null
+                                  ? formatPrice(
+                                      esppSummaryData.min_fmv,
+                                      selectedEsppPeriod.stock_currency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                Purchase price
+                              </div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.purchase_price != null
+                                  ? formatPrice(
+                                      esppSummaryData.purchase_price,
+                                      selectedEsppPeriod.stock_currency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">Shares purchased</div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.shares_purchased != null
+                                  ? quantityFormatter.format(
+                                      Number(esppSummaryData.shares_purchased)
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">Taxes paid</div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.taxes_paid != null
+                                  ? formatMoney(
+                                      esppSummaryData.taxes_paid,
+                                      selectedEsppPeriod.stock_currency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">Shares withheld</div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.shares_withheld != null
+                                  ? quantityFormatter.format(
+                                      Number(esppSummaryData.shares_withheld)
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">Shares left</div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.shares_left != null
+                                  ? quantityFormatter.format(
+                                      Number(esppSummaryData.shares_left)
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                Paid with shares
+                              </div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.paid_with_shares != null
+                                  ? formatMoney(
+                                      esppSummaryData.paid_with_shares,
+                                      selectedEsppPeriod.stock_currency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                Refunded from taxes
+                              </div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.refunded_from_taxes != null
+                                  ? formatMoney(
+                                      esppSummaryData.refunded_from_taxes,
+                                      selectedEsppPeriod.stock_currency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">
+                                Unused for shares
+                              </div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.unused_for_shares != null
+                                  ? formatMoney(
+                                      esppSummaryData.unused_for_shares,
+                                      selectedEsppPeriod.stock_currency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+                              <div className="text-xs text-slate-500">Total refunded</div>
+                              <div className="text-slate-900">
+                                {esppSummaryData?.total_refunded != null
+                                  ? formatMoney(
+                                      esppSummaryData.total_refunded,
+                                      selectedEsppPeriod.stock_currency
+                                    )
+                                  : "-"}
+                              </div>
+                            </div>
+                          </div>
+                          {esppSummaryError ? (
+                            <p className="mt-3 text-sm text-rose-600">
+                              {esppSummaryError}
+                            </p>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                  </>
                 ) : null}
               </>
             ) : null}

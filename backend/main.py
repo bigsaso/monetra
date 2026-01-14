@@ -1,7 +1,7 @@
 import calendar
 import os
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 
 import bcrypt
 from fastapi import FastAPI, HTTPException, Header, Query, UploadFile, File
@@ -330,6 +330,14 @@ class EsppPeriodStatus:
         if normalized not in cls.values:
             raise ValueError("Invalid ESPP period status.")
         return normalized
+
+
+ESPP_PRICE_QUANT = Decimal("0.00001")
+ESPP_MONEY_QUANT = Decimal("0.01")
+ESPP_FX_QUANT = Decimal("0.000001")
+ESPP_SHARES_QUANT = Decimal("0.00000001")
+ESPP_DISCOUNT_RATE = Decimal("0.85")
+ESPP_TAX_RATE = Decimal("0.47")
 
 
 class CategoryGroup:
@@ -738,6 +746,40 @@ class EsppDepositResponse(BaseModel):
     amount_home_currency: Decimal
 
 
+class EsppSummaryPayload(BaseModel):
+    open_fmv: Decimal | None = None
+    close_fmv: Decimal | None = None
+    exchange_rate: Decimal | None = None
+
+    @classmethod
+    def validate_payload(cls, payload: "EsppSummaryPayload") -> "EsppSummaryPayload":
+        if payload.open_fmv is not None and payload.open_fmv < 0:
+            raise ValueError("Open FMV cannot be negative.")
+        if payload.close_fmv is not None and payload.close_fmv < 0:
+            raise ValueError("Close FMV cannot be negative.")
+        if payload.exchange_rate is not None and payload.exchange_rate < 0:
+            raise ValueError("Exchange rate cannot be negative.")
+        return payload
+
+
+class EsppSummaryResponse(BaseModel):
+    open_fmv: Decimal | None = None
+    close_fmv: Decimal | None = None
+    exchange_rate: Decimal | None = None
+    min_fmv: Decimal | None = None
+    purchase_price: Decimal | None = None
+    total_invested_home: Decimal
+    total_invested_stock_currency: Decimal | None = None
+    shares_purchased: Decimal | None = None
+    taxes_paid: Decimal | None = None
+    shares_withheld: Decimal | None = None
+    shares_left: Decimal | None = None
+    paid_with_shares: Decimal | None = None
+    refunded_from_taxes: Decimal | None = None
+    unused_for_shares: Decimal | None = None
+    total_refunded: Decimal | None = None
+
+
 class TransactionImportPreviewResponse(BaseModel):
     transactions: list[ParsedTransaction]
     total_count: int
@@ -863,6 +905,114 @@ def ensure_espp_deposit_count(conn, period_id: int) -> None:
     ).scalar_one()
     if count != 13:
         raise HTTPException(status_code=400, detail="ESPP period must have exactly 13 deposits.")
+
+
+def compute_espp_summary(
+    total_invested_home: Decimal,
+    open_fmv: Decimal | None,
+    close_fmv: Decimal | None,
+    exchange_rate: Decimal | None,
+) -> EsppSummaryResponse:
+    total_invested_home = total_invested_home.quantize(ESPP_MONEY_QUANT)
+    normalized_open = open_fmv.quantize(ESPP_PRICE_QUANT) if open_fmv is not None else None
+    normalized_close = close_fmv.quantize(ESPP_PRICE_QUANT) if close_fmv is not None else None
+    normalized_fx = exchange_rate.quantize(ESPP_FX_QUANT) if exchange_rate is not None else None
+
+    min_fmv = None
+    if normalized_open is not None and normalized_close is not None:
+        min_fmv = min(normalized_open, normalized_close).quantize(ESPP_PRICE_QUANT)
+
+    purchase_price = (
+        (min_fmv * ESPP_DISCOUNT_RATE).quantize(ESPP_PRICE_QUANT)
+        if min_fmv is not None
+        else None
+    )
+
+    total_invested_stock_currency = None
+    if normalized_fx is not None and normalized_fx > 0:
+        total_invested_stock_currency = (total_invested_home * normalized_fx).quantize(
+            ESPP_MONEY_QUANT
+        )
+
+    shares_purchased = None
+    if (
+        total_invested_stock_currency is not None
+        and purchase_price is not None
+        and purchase_price > 0
+    ):
+        shares_purchased = (
+            total_invested_stock_currency / purchase_price
+        ).to_integral_value(rounding=ROUND_FLOOR)
+        shares_purchased = shares_purchased.quantize(ESPP_SHARES_QUANT)
+
+    taxes_paid = None
+    if (
+        shares_purchased is not None
+        and normalized_close is not None
+        and purchase_price is not None
+    ):
+        taxes_paid = (
+            shares_purchased
+            * (normalized_close - purchase_price)
+            * ESPP_TAX_RATE
+        ).quantize(ESPP_MONEY_QUANT)
+
+    shares_withheld = None
+    if taxes_paid is not None and normalized_close is not None and normalized_close > 0:
+        shares_withheld = (taxes_paid / normalized_close).to_integral_value(
+            rounding=ROUND_CEILING
+        )
+        shares_withheld = shares_withheld.quantize(ESPP_SHARES_QUANT)
+
+    shares_left = None
+    if shares_purchased is not None and shares_withheld is not None:
+        shares_left = (shares_purchased - shares_withheld).quantize(ESPP_SHARES_QUANT)
+
+    paid_with_shares = None
+    if shares_withheld is not None and normalized_close is not None:
+        paid_with_shares = (shares_withheld * normalized_close).quantize(
+            ESPP_MONEY_QUANT
+        )
+
+    refunded_from_taxes = None
+    if paid_with_shares is not None and taxes_paid is not None:
+        refunded_from_taxes = (paid_with_shares - taxes_paid).quantize(
+            ESPP_MONEY_QUANT
+        )
+
+    unused_for_shares = None
+    if (
+        total_invested_stock_currency is not None
+        and shares_purchased is not None
+        and purchase_price is not None
+    ):
+        unused_for_shares = (
+            total_invested_stock_currency - (shares_purchased * purchase_price)
+        ).quantize(ESPP_MONEY_QUANT)
+
+    total_refunded = None
+    if refunded_from_taxes is not None and unused_for_shares is not None:
+        total_refunded = (refunded_from_taxes + unused_for_shares).quantize(
+            ESPP_MONEY_QUANT
+        )
+
+    return EsppSummaryResponse(
+        open_fmv=normalized_open,
+        close_fmv=normalized_close,
+        exchange_rate=normalized_fx,
+        min_fmv=min_fmv,
+        purchase_price=purchase_price,
+        total_invested_home=total_invested_home,
+        total_invested_stock_currency=total_invested_stock_currency,
+        shares_purchased=shares_purchased,
+        taxes_paid=taxes_paid,
+        shares_withheld=shares_withheld,
+        shares_left=shares_left,
+        paid_with_shares=paid_with_shares,
+        refunded_from_taxes=refunded_from_taxes,
+        unused_for_shares=unused_for_shares,
+        total_refunded=total_refunded,
+    )
 
 
 def category_in_use(conn, user_id: int, name: str) -> bool:
@@ -1987,6 +2137,39 @@ def get_espp_period(
         start_date=row["start_date"],
         status=row["status"],
         created_at=row["created_at"],
+    )
+
+
+@app.post("/espp-periods/{period_id}/summary", response_model=EsppSummaryResponse)
+def preview_espp_summary(
+    period_id: int,
+    payload: EsppSummaryPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> EsppSummaryResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = EsppSummaryPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with engine.begin() as conn:
+        period_row = conn.execute(
+            select(espp_periods.c.status).where(
+                espp_periods.c.id == period_id, espp_periods.c.user_id == user_id
+            )
+        ).first()
+        if not period_row:
+            raise HTTPException(status_code=404, detail="ESPP period not found.")
+        if period_row[0] != "open":
+            raise HTTPException(status_code=400, detail="ESPP period must be open.")
+        total_invested_home = conn.execute(
+            select(func.coalesce(func.sum(espp_deposits.c.amount_home_currency), 0))
+            .where(espp_deposits.c.espp_period_id == period_id)
+        ).scalar_one()
+    return compute_espp_summary(
+        Decimal(total_invested_home),
+        payload.open_fmv,
+        payload.close_fmv,
+        payload.exchange_rate,
     )
 
 
