@@ -234,6 +234,7 @@ espp_closure = Table(
     Column("shares_purchased", Numeric(18, 8)),
     Column("shares_withheld", Numeric(18, 8)),
     Column("shares_left", Numeric(18, 8)),
+    Column("shares_available", Numeric(18, 8)),
     Column("taxes_paid", Numeric(12, 2)),
     Column("paid_with_shares", Numeric(18, 8)),
     Column("refunded_from_taxes", Numeric(12, 2)),
@@ -783,6 +784,16 @@ class EsppSummaryResponse(BaseModel):
     total_refunded: Decimal | None = None
 
 
+class EsppBatchResponse(BaseModel):
+    period_id: int
+    period_name: str
+    stock_ticker: str
+    stock_currency: str
+    purchase_date: date
+    shares_available: Decimal
+    purchase_price: Decimal | None = None
+
+
 class EsppOpenFmvPayload(BaseModel):
     open_fmv: Decimal | None = None
 
@@ -822,6 +833,35 @@ class EsppCloseResponse(BaseModel):
     transaction_id: int
     investment_id: int
     summary: EsppSummaryResponse
+
+
+class EsppSellPayload(BaseModel):
+    account_id: int
+    quantity: Decimal
+    price: Decimal
+    sell_date: date
+    currency: str
+
+    @classmethod
+    def validate_payload(cls, payload: "EsppSellPayload") -> "EsppSellPayload":
+        if payload.account_id <= 0:
+            raise ValueError("Account is required.")
+        if payload.quantity <= 0:
+            raise ValueError("Sell quantity must be greater than zero.")
+        if payload.price <= 0:
+            raise ValueError("Sell price must be greater than zero.")
+        payload.currency = normalize_currency(payload.currency)
+        return payload
+
+
+class EsppSellResponse(BaseModel):
+    period_id: int
+    transaction_id: int
+    investment_entry_id: int
+    shares_remaining: Decimal
+    proceeds: Decimal
+    cost_of_sold_shares: Decimal
+    realized_profit_loss: Decimal
 
 
 class TransactionImportPreviewResponse(BaseModel):
@@ -2136,6 +2176,61 @@ def delete_investment(investment_id: int, x_user_id: str | None = Header(None, a
     return {"status": "deleted"}
 
 
+@app.get("/espp-batches", response_model=list[EsppBatchResponse])
+def list_espp_batches(
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> list[EsppBatchResponse]:
+    user_id = get_user_id(x_user_id)
+    shares_available = func.coalesce(
+        espp_closure.c.shares_available, espp_closure.c.shares_left, 0
+    )
+    stmt = (
+        select(
+            espp_periods.c.id.label("period_id"),
+            espp_periods.c.name.label("period_name"),
+            espp_periods.c.stock_ticker,
+            espp_periods.c.stock_currency,
+            func.max(espp_deposits.c.date).label("purchase_date"),
+            espp_closure.c.purchase_price,
+            shares_available.label("shares_available"),
+        )
+        .select_from(
+            espp_periods.join(
+                espp_closure, espp_periods.c.id == espp_closure.c.espp_period_id
+            ).join(
+                espp_deposits, espp_deposits.c.espp_period_id == espp_periods.c.id
+            )
+        )
+        .where(espp_periods.c.user_id == user_id, espp_periods.c.status == "closed")
+        .group_by(
+            espp_periods.c.id,
+            espp_periods.c.name,
+            espp_periods.c.stock_ticker,
+            espp_periods.c.stock_currency,
+            espp_closure.c.purchase_price,
+            espp_closure.c.shares_left,
+            espp_closure.c.shares_available,
+        )
+        .having(shares_available > 0)
+        .order_by(espp_periods.c.start_date.desc(), espp_periods.c.id.desc())
+    )
+    with engine.begin() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [
+        EsppBatchResponse(
+            period_id=row["period_id"],
+            period_name=row["period_name"],
+            stock_ticker=row["stock_ticker"],
+            stock_currency=row["stock_currency"],
+            purchase_date=row["purchase_date"],
+            shares_available=row["shares_available"],
+            purchase_price=row["purchase_price"],
+        )
+        for row in rows
+        if row["purchase_date"] is not None
+    ]
+
+
 @app.get("/espp-periods", response_model=list[EsppPeriodResponse])
 def list_espp_periods(
     x_user_id: str | None = Header(None, alias="x-user-id"),
@@ -2480,6 +2575,7 @@ def close_espp_period(
             "shares_purchased": summary.shares_purchased,
             "shares_withheld": summary.shares_withheld,
             "shares_left": summary.shares_left,
+            "shares_available": summary.shares_left,
             "taxes_paid": summary.taxes_paid,
             "paid_with_shares": summary.paid_with_shares,
             "refunded_from_taxes": summary.refunded_from_taxes,
@@ -2516,6 +2612,171 @@ def close_espp_period(
         transaction_id=transaction_id,
         investment_id=investment_id,
         summary=summary,
+    )
+
+
+@app.post("/espp-periods/{period_id}/sell", response_model=EsppSellResponse)
+def sell_espp_shares(
+    period_id: int,
+    payload: EsppSellPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> EsppSellResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = EsppSellPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        period_row = conn.execute(
+            select(
+                espp_periods.c.id,
+                espp_periods.c.status,
+                espp_periods.c.stock_ticker,
+                espp_periods.c.stock_currency,
+                espp_closure.c.purchase_price,
+                espp_closure.c.shares_left,
+                espp_closure.c.shares_available,
+            )
+            .select_from(
+                espp_periods.join(
+                    espp_closure, espp_periods.c.id == espp_closure.c.espp_period_id
+                )
+            )
+            .where(espp_periods.c.id == period_id, espp_periods.c.user_id == user_id)
+        ).mappings().first()
+        if not period_row:
+            raise HTTPException(status_code=404, detail="ESPP period not found.")
+        if period_row["status"] != "closed":
+            raise HTTPException(status_code=400, detail="ESPP period must be closed.")
+        if not period_row["purchase_price"]:
+            raise HTTPException(status_code=400, detail="ESPP purchase price unavailable.")
+
+        account_exists = conn.execute(
+            select(accounts.c.id).where(
+                accounts.c.id == payload.account_id, accounts.c.user_id == user_id
+            )
+        ).first()
+        if not account_exists:
+            raise HTTPException(status_code=404, detail="Account not found.")
+
+        stock_currency = normalize_currency(period_row["stock_currency"])
+        if payload.currency != stock_currency:
+            raise HTTPException(
+                status_code=400,
+                detail="ESPP sells must use the stock currency.",
+            )
+
+        shares_available = period_row["shares_available"]
+        if shares_available is None:
+            shares_available = period_row["shares_left"]
+        if shares_available is None:
+            raise HTTPException(status_code=400, detail="ESPP shares unavailable.")
+        if payload.quantity > shares_available:
+            raise HTTPException(status_code=400, detail="Sell quantity exceeds available shares.")
+
+        quantity = payload.quantity.quantize(ESPP_SHARES_QUANT)
+        sell_price = payload.price.quantize(ESPP_PRICE_QUANT)
+        purchase_price = period_row["purchase_price"].quantize(ESPP_PRICE_QUANT)
+        total_proceeds = (quantity * sell_price).quantize(ESPP_MONEY_QUANT)
+        cost_of_sold_shares = (quantity * purchase_price).quantize(ESPP_MONEY_QUANT)
+        realized_profit_loss = (total_proceeds - cost_of_sold_shares).quantize(ESPP_MONEY_QUANT)
+
+        remaining_shares = (shares_available - quantity).quantize(ESPP_SHARES_QUANT)
+        if remaining_shares < 0:
+            raise HTTPException(status_code=400, detail="Sell quantity exceeds available shares.")
+
+        category_name = "ESPP"
+        category_exists = conn.execute(
+            select(categories.c.id).where(
+                categories.c.user_id == user_id, categories.c.name == category_name
+            )
+        ).mappings().first()
+        if not category_exists:
+            conn.execute(
+                insert(categories).values(
+                    user_id=user_id,
+                    name=category_name,
+                    group="investments",
+                )
+            )
+
+        investment_name = f"ESPP ({period_row['stock_ticker']})"
+        investment_row = conn.execute(
+            select(investments.c.id).where(
+                investments.c.user_id == user_id, investments.c.name == investment_name
+            )
+        ).mappings().first()
+        if not investment_row:
+            investment_row = conn.execute(
+                insert(investments)
+                .values(
+                    user_id=user_id,
+                    name=investment_name,
+                    symbol=period_row["stock_ticker"],
+                    asset_type="stock",
+                )
+                .returning(investments.c.id)
+            ).mappings().first()
+        if not investment_row:
+            raise HTTPException(status_code=500, detail="Failed to create investment.")
+        investment_id = investment_row["id"]
+
+        txn_row = conn.execute(
+            insert(transactions)
+            .values(
+                user_id=user_id,
+                account_id=payload.account_id,
+                amount=total_proceeds,
+                currency=stock_currency,
+                type="income",
+                category=category_name,
+                date=payload.sell_date,
+                notes=None,
+            )
+            .returning(transactions.c.id)
+        ).mappings().first()
+        if not txn_row:
+            raise HTTPException(status_code=500, detail="Failed to create transaction.")
+        transaction_id = txn_row["id"]
+
+        entry_row = conn.execute(
+            insert(investment_entries)
+            .values(
+                user_id=user_id,
+                investment_id=investment_id,
+                transaction_id=transaction_id,
+                quantity=quantity,
+                price=sell_price,
+                price_per_share=sell_price,
+                total_amount=total_proceeds,
+                currency=stock_currency,
+                cost_of_sold_shares=cost_of_sold_shares,
+                realized_profit_loss=realized_profit_loss,
+                source="espp",
+                espp_period_id=period_id,
+                type="sell",
+                date=payload.sell_date,
+            )
+            .returning(investment_entries.c.id)
+        ).mappings().first()
+        if not entry_row:
+            raise HTTPException(status_code=500, detail="Failed to create investment entry.")
+
+        conn.execute(
+            update(espp_closure)
+            .where(espp_closure.c.espp_period_id == period_id)
+            .values(shares_available=max(remaining_shares, Decimal("0")))
+        )
+
+    return EsppSellResponse(
+        period_id=period_id,
+        transaction_id=transaction_id,
+        investment_entry_id=entry_row["id"],
+        shares_remaining=remaining_shares,
+        proceeds=total_proceeds,
+        cost_of_sold_shares=cost_of_sold_shares,
+        realized_profit_loss=realized_profit_loss,
     )
 
 
@@ -3515,6 +3776,7 @@ def convert_to_home_currency(
                 investment_entries.c.transaction_id,
                 investment_entries.c.type,
                 investment_entries.c.investment_id,
+                investment_entries.c.source,
             ).where(
                 investment_entries.c.id == payload.record_id,
                 investment_entries.c.user_id == user_id,
@@ -3546,14 +3808,15 @@ def convert_to_home_currency(
             if txn_row:
                 investment_entry = conn.execute(
                     select(
-                        investment_entries.c.id,
-                        investment_entries.c.type,
-                        investment_entries.c.investment_id,
-                    ).where(
-                        investment_entries.c.transaction_id == txn_row["id"],
-                        investment_entries.c.user_id == user_id,
-                    )
-                ).mappings().first()
+                investment_entries.c.id,
+                investment_entries.c.type,
+                investment_entries.c.investment_id,
+                investment_entries.c.source,
+            ).where(
+                investment_entries.c.transaction_id == txn_row["id"],
+                investment_entries.c.user_id == user_id,
+            )
+        ).mappings().first()
         if not txn_row:
             raise HTTPException(status_code=404, detail="Record not found.")
         if investment_entry:
@@ -3572,6 +3835,11 @@ def convert_to_home_currency(
                 raise HTTPException(
                     status_code=400,
                     detail="Investment buy transactions cannot be converted.",
+                )
+            if investment_entry.get("source") == "espp":
+                raise HTTPException(
+                    status_code=400,
+                    detail="ESPP sell transactions cannot be converted.",
                 )
         elif txn_row["type"] == "investment":
             raise HTTPException(status_code=400, detail="Investment transactions cannot be converted.")

@@ -94,6 +94,17 @@ const formatPrice = (value, currency) => {
   }
 };
 
+const getCurrencyLabel = (currency) => {
+  const normalizedCurrency = normalizeCurrencyValue(currency);
+  if (!normalizedCurrency) {
+    return "Select currency";
+  }
+  const match = CURRENCY_OPTIONS.find(
+    (option) => option.value === normalizedCurrency
+  );
+  return match ? match.label : normalizedCurrency;
+};
+
 const parseDateValue = (value) => {
   if (!value) {
     return null;
@@ -155,6 +166,15 @@ const buildEmptySellForm = (dateValue) => ({
   quantity: "",
   price: "",
   investment_type: "sell"
+});
+
+const buildEmptyEsppSellForm = (dateValue) => ({
+  account_id: "",
+  batch_id: "",
+  quantity: "",
+  price: "",
+  date: dateValue,
+  currency: ""
 });
 
 export default function InvestmentsClient({ view = "investments" }) {
@@ -222,6 +242,13 @@ export default function InvestmentsClient({ view = "investments" }) {
   const [sellForm, setSellForm] = useState(buildEmptySellForm(""));
   const [sellError, setSellError] = useState("");
   const [sellSaving, setSellSaving] = useState(false);
+  const [esppBatches, setEsppBatches] = useState([]);
+  const [esppBatchesLoading, setEsppBatchesLoading] = useState(false);
+  const [esppBatchesError, setEsppBatchesError] = useState("");
+  const [esppSellModalOpen, setEsppSellModalOpen] = useState(false);
+  const [esppSellForm, setEsppSellForm] = useState(buildEmptyEsppSellForm(""));
+  const [esppSellError, setEsppSellError] = useState("");
+  const [esppSellSaving, setEsppSellSaving] = useState(false);
   const [transactionLookup, setTransactionLookup] = useState(null);
   const [transactionLookupLoading, setTransactionLookupLoading] = useState(false);
   const [transactionLookupError, setTransactionLookupError] = useState("");
@@ -298,6 +325,31 @@ export default function InvestmentsClient({ view = "investments" }) {
       ),
     [esppPeriods, selectedEsppPeriodId]
   );
+
+  const selectedEsppBatch = useMemo(
+    () =>
+      esppBatches.find(
+        (batch) => String(batch.period_id) === String(esppSellForm.batch_id)
+      ),
+    [esppBatches, esppSellForm.batch_id]
+  );
+
+  const esppSellCurrencyOptions = useMemo(() => {
+    if (!selectedEsppBatch?.stock_currency) {
+      return CURRENCY_OPTIONS.filter((option) => option.value);
+    }
+    const match = CURRENCY_OPTIONS.find(
+      (option) => option.value === selectedEsppBatch.stock_currency
+    );
+    return match
+      ? [match]
+      : [
+          {
+            value: selectedEsppBatch.stock_currency,
+            label: getCurrencyLabel(selectedEsppBatch.stock_currency)
+          }
+        ];
+  }, [selectedEsppBatch?.stock_currency]);
 
   const esppSchedule = useMemo(
     () => buildEsppSchedule(selectedEsppPeriod?.start_date),
@@ -593,6 +645,37 @@ export default function InvestmentsClient({ view = "investments" }) {
     }
   };
 
+  const loadEsppBatches = async (preferredBatchId = "") => {
+    setEsppBatchesLoading(true);
+    setEsppBatchesError("");
+    try {
+      const response = await fetch("/api/espp-batches");
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load ESPP batches.");
+      }
+      const data = await response.json();
+      setEsppBatches(data);
+      const candidateId = preferredBatchId || esppSellForm.batch_id;
+      const hasCandidate = data.some(
+        (batch) => String(batch.period_id) === String(candidateId)
+      );
+      const nextId = hasCandidate
+        ? String(candidateId)
+        : data.length > 0
+          ? String(data[0].period_id)
+          : "";
+      setEsppSellForm((prev) => ({
+        ...prev,
+        batch_id: nextId
+      }));
+    } catch (err) {
+      setEsppBatchesError(err.message);
+    } finally {
+      setEsppBatchesLoading(false);
+    }
+  };
+
   const loadEsppDeposits = async (periodId) => {
     if (!periodId) {
       setEsppDeposits([]);
@@ -735,6 +818,7 @@ export default function InvestmentsClient({ view = "investments" }) {
     loadHomeCurrency();
     if (isEsppView) {
       loadEsppPeriods();
+      loadEsppBatches();
       return;
     }
     loadPositions();
@@ -1229,6 +1313,7 @@ export default function InvestmentsClient({ view = "investments" }) {
       await Promise.all([
         loadEsppPeriods(String(selectedEsppPeriodId)),
         loadEsppDeposits(selectedEsppPeriodId),
+        loadEsppBatches(),
         loadPositions(),
         loadActivity(),
         loadRealized()
@@ -1406,9 +1491,33 @@ export default function InvestmentsClient({ view = "investments" }) {
     setSellError("");
   };
 
+  const openEsppSellModal = (batch) => {
+    setEsppSellForm({
+      ...buildEmptyEsppSellForm(today),
+      batch_id: batch?.period_id ? String(batch.period_id) : "",
+      currency: batch?.stock_currency || ""
+    });
+    setEsppSellError("");
+    setEsppSellModalOpen(true);
+  };
+
+  const closeEsppSellModal = () => {
+    if (esppSellSaving) {
+      return;
+    }
+    setEsppSellModalOpen(false);
+    setEsppSellForm(buildEmptyEsppSellForm(today));
+    setEsppSellError("");
+  };
+
   const handleSellChange = (event) => {
     const { name, value } = event.target;
     setSellForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleEsppSellChange = (event) => {
+    const { name, value } = event.target;
+    setEsppSellForm((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleSellSubmit = async (event) => {
@@ -1476,6 +1585,73 @@ export default function InvestmentsClient({ view = "investments" }) {
       setSellError(err.message);
     } finally {
       setSellSaving(false);
+    }
+  };
+
+  const handleEsppSellSubmit = async (event) => {
+    event.preventDefault();
+    if (!esppSellForm.batch_id) {
+      setEsppSellError("Select an ESPP batch.");
+      return;
+    }
+    if (!esppSellForm.account_id) {
+      setEsppSellError("Select an account.");
+      return;
+    }
+    const quantityValue = Number(esppSellForm.quantity);
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+      setEsppSellError("Enter a valid quantity.");
+      return;
+    }
+    if (
+      selectedEsppBatch?.shares_available != null &&
+      quantityValue > Number(selectedEsppBatch.shares_available)
+    ) {
+      setEsppSellError("Quantity exceeds available shares.");
+      return;
+    }
+    const priceValue = Number(esppSellForm.price);
+    if (!Number.isFinite(priceValue) || priceValue <= 0) {
+      setEsppSellError("Enter a valid sell price.");
+      return;
+    }
+    if (!esppSellForm.date) {
+      setEsppSellError("Select a sell date.");
+      return;
+    }
+    if (!esppSellForm.currency) {
+      setEsppSellError("Select a currency.");
+      return;
+    }
+
+    setEsppSellSaving(true);
+    setEsppSellError("");
+    try {
+      const payload = {
+        account_id: Number(esppSellForm.account_id),
+        quantity: quantityValue,
+        price: priceValue,
+        sell_date: esppSellForm.date,
+        currency: esppSellForm.currency
+      };
+      const response = await fetch(
+        `/api/espp-periods/${esppSellForm.batch_id}/sell`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to record ESPP sale.");
+      }
+      await loadEsppBatches(esppSellForm.batch_id);
+      closeEsppSellModal();
+    } catch (err) {
+      setEsppSellError(err.message);
+    } finally {
+      setEsppSellSaving(false);
     }
   };
 
@@ -1594,6 +1770,49 @@ export default function InvestmentsClient({ view = "investments" }) {
       }
     }
   }, [accounts, categories, sellForm.account_id, sellForm.category, sellModalOpen]);
+
+  useEffect(() => {
+    if (!esppSellModalOpen) {
+      return;
+    }
+    if (!esppSellForm.account_id && accounts.length === 1) {
+      setEsppSellForm((prev) => ({
+        ...prev,
+        account_id: String(accounts[0].id)
+      }));
+    }
+    if (!esppSellForm.batch_id && esppBatches.length > 0) {
+      setEsppSellForm((prev) => ({
+        ...prev,
+        batch_id: String(esppBatches[0].period_id)
+      }));
+    }
+  }, [
+    accounts,
+    esppBatches,
+    esppSellForm.account_id,
+    esppSellForm.batch_id,
+    esppSellModalOpen
+  ]);
+
+  useEffect(() => {
+    if (!esppSellModalOpen) {
+      return;
+    }
+    if (
+      selectedEsppBatch?.stock_currency &&
+      esppSellForm.currency !== selectedEsppBatch.stock_currency
+    ) {
+      setEsppSellForm((prev) => ({
+        ...prev,
+        currency: selectedEsppBatch.stock_currency
+      }));
+    }
+  }, [
+    esppSellForm.currency,
+    esppSellModalOpen,
+    selectedEsppBatch?.stock_currency
+  ]);
 
   useEffect(() => {
     if (!isEsppView) {
@@ -2207,6 +2426,83 @@ export default function InvestmentsClient({ view = "investments" }) {
                 )}
               </CardContent>
             </Card>
+            <Card>
+              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle>ESPP holdings</CardTitle>
+                  <CardDescription>
+                    Sell shares from a specific ESPP batch.
+                  </CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => openEsppSellModal(esppBatches[0])}
+                  disabled={esppBatches.length === 0}
+                >
+                  Sell ESPP Shares
+                </Button>
+              </CardHeader>
+              <CardContent className="overflow-x-auto md:overflow-visible">
+                {esppBatchesLoading ? (
+                  <p>Loading ESPP batches...</p>
+                ) : null}
+                {esppBatchesError ? (
+                  <p className="text-sm text-rose-600">{esppBatchesError}</p>
+                ) : null}
+                {!esppBatchesLoading && esppBatches.length === 0 ? (
+                  <p>No ESPP shares available to sell yet.</p>
+                ) : null}
+                {!esppBatchesLoading && esppBatches.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Period</TableHead>
+                        <TableHead>Purchase date</TableHead>
+                        <TableHead className="text-right">Shares available</TableHead>
+                        <TableHead className="text-right">Cost per share</TableHead>
+                        <TableHead>Action</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {esppBatches.map((batch) => (
+                        <TableRow key={batch.period_id}>
+                          <TableCell>
+                            <div className="font-medium text-slate-900">
+                              {batch.period_name}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {batch.stock_ticker} ({batch.stock_currency})
+                            </div>
+                          </TableCell>
+                          <TableCell>{formatShortDate(batch.purchase_date)}</TableCell>
+                          <TableCell className="text-right">
+                            {quantityFormatter.format(
+                              Number(batch.shares_available || 0)
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatPrice(
+                              batch.purchase_price,
+                              batch.stock_currency
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => openEsppSellModal(batch)}
+                            >
+                              Sell ESPP Shares
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : null}
+              </CardContent>
+            </Card>
           </>
         ) : null}
 
@@ -2508,6 +2804,185 @@ export default function InvestmentsClient({ view = "investments" }) {
                 </DialogClose>
                 <Button type="submit" disabled={esppSaving}>
                   Create period
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+      {isEsppView ? (
+        <Dialog
+          open={esppSellModalOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              closeEsppSellModal();
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-[640px] max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Sell ESPP shares</DialogTitle>
+              <DialogDescription>
+                Choose a batch and record a sale for that period.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleEsppSellSubmit} className="grid gap-3">
+              <div className="rounded-md border border-slate-200">
+                {esppBatches.length === 0 ? (
+                  <p className="px-4 py-3 text-sm text-slate-500">
+                    No ESPP batches available to sell.
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Select</TableHead>
+                        <TableHead>Period</TableHead>
+                        <TableHead>Purchase date</TableHead>
+                        <TableHead className="text-right">Shares available</TableHead>
+                        <TableHead className="text-right">Cost per share</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {esppBatches.map((batch) => (
+                        <TableRow key={batch.period_id}>
+                          <TableCell>
+                            <input
+                              type="radio"
+                              name="batch_id"
+                              value={batch.period_id}
+                              checked={
+                                String(esppSellForm.batch_id) ===
+                                String(batch.period_id)
+                              }
+                              onChange={handleEsppSellChange}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <div className="font-medium text-slate-900">
+                              {batch.period_name}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {batch.stock_ticker} ({batch.stock_currency})
+                            </div>
+                          </TableCell>
+                          <TableCell>{formatShortDate(batch.purchase_date)}</TableCell>
+                          <TableCell className="text-right">
+                            {quantityFormatter.format(
+                              Number(batch.shares_available || 0)
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatPrice(
+                              batch.purchase_price,
+                              batch.stock_currency
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+              <label className="text-sm text-slate-600">
+                Account
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="account_id"
+                  value={esppSellForm.account_id}
+                  onChange={handleEsppSellChange}
+                  required
+                >
+                  <option value="">Select an account</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name} • {account.type}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm text-slate-600">
+                Quantity
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="quantity"
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  max={selectedEsppBatch?.shares_available || undefined}
+                  value={esppSellForm.quantity}
+                  onChange={handleEsppSellChange}
+                  required
+                />
+                {selectedEsppBatch?.shares_available != null ? (
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Available:{" "}
+                    {quantityFormatter.format(
+                      Number(selectedEsppBatch.shares_available || 0)
+                    )}
+                  </span>
+                ) : null}
+              </label>
+              <label className="text-sm text-slate-600">
+                Sell price per share
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="price"
+                  type="number"
+                  step="0.00001"
+                  min="0"
+                  value={esppSellForm.price}
+                  onChange={handleEsppSellChange}
+                  required
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                Sell date
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="date"
+                  type="date"
+                  value={esppSellForm.date}
+                  onChange={handleEsppSellChange}
+                  required
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                Currency
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  name="currency"
+                  value={esppSellForm.currency}
+                  onChange={handleEsppSellChange}
+                  required
+                >
+                  <option value="">Select currency</option>
+                  {esppSellCurrencyOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {esppSellError ? (
+                <p className="text-sm text-rose-600">{esppSellError}</p>
+              ) : null}
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={closeEsppSellModal}
+                    disabled={esppSellSaving}
+                  >
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button
+                  type="submit"
+                  disabled={esppSellSaving || esppBatches.length === 0}
+                >
+                  {esppSellSaving ? "Saving..." : "Record sell"}
                 </Button>
               </DialogFooter>
             </form>
