@@ -369,56 +369,56 @@ export default function InvestmentsClient({ view = "investments" }) {
     if (!esppPostCloseSummary) {
       return null;
     }
-    const sharesPurchased = Number(esppPostCloseSummary.shares_purchased || 0);
     const sharesLeft = Number(esppPostCloseSummary.shares_left || 0);
-    const taxesPaid = Number(esppPostCloseSummary.taxes_paid || 0);
-    const totalRefunded = Number(esppPostCloseSummary.total_refunded || 0);
+    const closeFmv = Number(esppPostCloseSummary.close_fmv || 0);
     const totalInvestedHome = Number(esppPostCloseSummary.total_invested_home || 0);
     const livePrice = Number(esppMarketQuote?.price || 0);
     if (!Number.isFinite(livePrice) || livePrice <= 0) {
       return {
-        sharesPurchased,
         sharesLeft,
-        taxesPaid,
-        totalRefunded,
+        closeFmv,
         totalInvestedHome,
         livePrice: null,
-        currentValue: null,
-        sellableValue: null,
-        totalValueStock: null,
-        totalValueHome: null,
+        currentValueStock: null,
+        estimatedTaxes: null,
+        canSellValue: null,
+        canSellHome: null,
         profitLoss: null,
         profitLossPercent: null
       };
     }
-    const currentValue = sharesPurchased * livePrice;
-    const sellableValue = sharesLeft * livePrice;
-    const totalValueStock = sellableValue + totalRefunded;
+    const currentValueStock = sharesLeft * livePrice;
+    const hasCloseFmv = Number.isFinite(closeFmv) && closeFmv > 0;
+    const priceDelta = hasCloseFmv ? Math.abs(closeFmv - livePrice) : null;
+    const estimatedTaxes =
+      hasCloseFmv ? sharesLeft * (priceDelta * 0.5) * 0.47 : null;
+    const canSellValue =
+      estimatedTaxes != null ? currentValueStock - estimatedTaxes : null;
     const fxRate =
       esppFxRate && Number.isFinite(Number(esppFxRate))
         ? Number(esppFxRate)
         : null;
-    const totalValueHome =
-      fxRate && Number.isFinite(fxRate) ? totalValueStock * fxRate : null;
+    const canSellHome =
+      fxRate && Number.isFinite(fxRate) && canSellValue != null
+        ? canSellValue * fxRate
+        : null;
     const profitLoss =
-      totalValueHome !== null && Number.isFinite(totalInvestedHome)
-        ? totalValueHome - totalInvestedHome
+      canSellHome !== null && Number.isFinite(totalInvestedHome)
+        ? canSellHome - totalInvestedHome
         : null;
     const profitLossPercent =
       profitLoss !== null && totalInvestedHome > 0
         ? profitLoss / totalInvestedHome
         : null;
     return {
-      sharesPurchased,
       sharesLeft,
-      taxesPaid,
-      totalRefunded,
+      closeFmv,
       totalInvestedHome,
       livePrice,
-      currentValue,
-      sellableValue,
-      totalValueStock,
-      totalValueHome,
+      currentValueStock,
+      estimatedTaxes,
+      canSellValue,
+      canSellHome,
       profitLoss,
       profitLossPercent
     };
@@ -2081,12 +2081,12 @@ export default function InvestmentsClient({ view = "investments" }) {
                         <div className="grid gap-3 md:grid-cols-2">
                           <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
                             <div className="text-xs text-slate-500">
-                              Current value ({selectedEsppPeriod.stock_currency})
+                              Ticker current price ({selectedEsppPeriod.stock_currency})
                             </div>
                             <div className="text-slate-900">
-                              {esppLiveMetrics?.totalValueStock != null
-                                ? formatMoney(
-                                    esppLiveMetrics.totalValueStock,
+                              {esppLiveMetrics?.livePrice != null
+                                ? formatPrice(
+                                    esppLiveMetrics.livePrice,
                                     selectedEsppPeriod.stock_currency
                                   )
                                 : "-"}
@@ -2094,12 +2094,25 @@ export default function InvestmentsClient({ view = "investments" }) {
                           </div>
                           <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
                             <div className="text-xs text-slate-500">
-                              Estimated taxes ({selectedEsppPeriod.stock_currency})
+                              Current value ({selectedEsppPeriod.stock_currency})
                             </div>
                             <div className="text-slate-900">
-                              {esppPostCloseSummary?.taxes_paid != null
+                              {esppLiveMetrics?.currentValueStock != null
                                 ? formatMoney(
-                                    esppPostCloseSummary.taxes_paid,
+                                    esppLiveMetrics.currentValueStock,
+                                    selectedEsppPeriod.stock_currency
+                                  )
+                                : "-"}
+                            </div>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                            <div className="text-xs text-slate-500">
+                              Taxes ({selectedEsppPeriod.stock_currency})
+                            </div>
+                            <div className="text-slate-900">
+                              {esppLiveMetrics?.estimatedTaxes != null
+                                ? formatMoney(
+                                    esppLiveMetrics.estimatedTaxes,
                                     selectedEsppPeriod.stock_currency
                                   )
                                 : "-"}
@@ -2110,9 +2123,9 @@ export default function InvestmentsClient({ view = "investments" }) {
                               Can sell amount ({selectedEsppPeriod.stock_currency})
                             </div>
                             <div className="text-slate-900">
-                              {esppLiveMetrics?.sellableValue != null
+                              {esppLiveMetrics?.canSellValue != null
                                 ? formatMoney(
-                                    esppLiveMetrics.sellableValue,
+                                    esppLiveMetrics.canSellValue,
                                     selectedEsppPeriod.stock_currency
                                   )
                                 : "-"}
@@ -2120,12 +2133,12 @@ export default function InvestmentsClient({ view = "investments" }) {
                           </div>
                           <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
                             <div className="text-xs text-slate-500">
-                              Converted value ({homeCurrency})
+                              In {homeCurrency}
                             </div>
                             <div className="text-slate-900">
-                              {esppLiveMetrics?.totalValueHome != null
+                              {esppLiveMetrics?.canSellHome != null
                                 ? formatMoney(
-                                    esppLiveMetrics.totalValueHome,
+                                    esppLiveMetrics.canSellHome,
                                     homeCurrency
                                   )
                                 : "-"}
