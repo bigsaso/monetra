@@ -2181,6 +2181,47 @@ def get_espp_period(
     )
 
 
+@app.get("/espp-periods/{period_id}/closure", response_model=EsppSummaryResponse)
+def get_espp_closure_summary(
+    period_id: int, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> EsppSummaryResponse:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        period_row = conn.execute(
+            select(espp_periods.c.status).where(
+                espp_periods.c.id == period_id, espp_periods.c.user_id == user_id
+            )
+        ).first()
+        if not period_row:
+            raise HTTPException(status_code=404, detail="ESPP period not found.")
+        if period_row[0] != "closed":
+            raise HTTPException(status_code=400, detail="ESPP period must be closed.")
+        closure_row = conn.execute(
+            select(espp_closure).where(espp_closure.c.espp_period_id == period_id)
+        ).mappings().first()
+    if not closure_row:
+        raise HTTPException(
+            status_code=404, detail="ESPP close summary unavailable."
+        )
+    return EsppSummaryResponse(
+        open_fmv=closure_row["open_fmv"],
+        close_fmv=closure_row["close_fmv"],
+        exchange_rate=closure_row["exchange_rate"],
+        min_fmv=closure_row["min_fmv"],
+        purchase_price=closure_row["purchase_price"],
+        total_invested_home=closure_row["total_invested_home"],
+        total_invested_stock_currency=closure_row["total_invested_stock_currency"],
+        shares_purchased=closure_row["shares_purchased"],
+        taxes_paid=closure_row["taxes_paid"],
+        shares_withheld=closure_row["shares_withheld"],
+        shares_left=closure_row["shares_left"],
+        paid_with_shares=closure_row["paid_with_shares"],
+        refunded_from_taxes=closure_row["refunded_from_taxes"],
+        unused_for_shares=closure_row["unused_for_shares"],
+        total_refunded=closure_row["total_refunded"],
+    )
+
+
 @app.post("/espp-periods/{period_id}/summary", response_model=EsppSummaryResponse)
 def preview_espp_summary(
     period_id: int,
