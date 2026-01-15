@@ -204,6 +204,10 @@ export default function InvestmentsClient({ view = "investments" }) {
   const [esppSummaryLoading, setEsppSummaryLoading] = useState(false);
   const [esppSummaryError, setEsppSummaryError] = useState("");
   const [esppClosedSummaries, setEsppClosedSummaries] = useState({});
+  const [esppBatchValuations, setEsppBatchValuations] = useState({});
+  const [esppBatchValuationLoading, setEsppBatchValuationLoading] =
+    useState(false);
+  const [esppBatchValuationError, setEsppBatchValuationError] = useState("");
   const [esppClosureLoading, setEsppClosureLoading] = useState(false);
   const [esppClosureError, setEsppClosureError] = useState("");
   const [esppCloseModalOpen, setEsppCloseModalOpen] = useState(false);
@@ -422,30 +426,48 @@ export default function InvestmentsClient({ view = "investments" }) {
       return null;
     }
     const sharesLeft = Number(esppPostCloseSummary.shares_left || 0);
+    const batchValuation = esppBatchValuations[selectedEsppPeriodId] || null;
+    const realizedValue =
+      batchValuation?.realized_value != null
+        ? Number(batchValuation.realized_value)
+        : null;
+    const remainingShares =
+      batchValuation?.remaining_shares != null
+        ? Number(batchValuation.remaining_shares)
+        : sharesLeft;
+    const normalizedRemainingShares = Number.isFinite(remainingShares)
+      ? remainingShares
+      : sharesLeft;
     const closeFmv = Number(esppPostCloseSummary.close_fmv || 0);
     const totalInvestedHome = Number(esppPostCloseSummary.total_invested_home || 0);
     const livePrice = Number(esppMarketQuote?.price || 0);
     if (!Number.isFinite(livePrice) || livePrice <= 0) {
       return {
         sharesLeft,
+        remainingShares: normalizedRemainingShares,
         closeFmv,
+        realizedValue,
         totalInvestedHome,
         livePrice: null,
-        currentValueStock: null,
+        unrealizedValue: null,
+        totalEsppValue: null,
         estimatedTaxes: null,
         canSellValue: null,
         canSellHome: null,
+        totalEsppHome: null,
         profitLoss: null,
         profitLossPercent: null
       };
     }
-    const currentValueStock = sharesLeft * livePrice;
+    const unrealizedValue = normalizedRemainingShares * livePrice;
+    const totalEsppValue =
+      realizedValue != null ? realizedValue + unrealizedValue : null;
     const hasCloseFmv = Number.isFinite(closeFmv) && closeFmv > 0;
     const priceDelta = hasCloseFmv ? Math.abs(closeFmv - livePrice) : null;
     const estimatedTaxes =
-      hasCloseFmv ? sharesLeft * (priceDelta * 0.5) * 0.47 : null;
+      hasCloseFmv ? normalizedRemainingShares * (priceDelta * 0.5) * 0.47 : null;
     const canSellValue =
-      estimatedTaxes != null ? currentValueStock - estimatedTaxes : null;
+      estimatedTaxes != null ? unrealizedValue - estimatedTaxes : null;
     const fxRate =
       esppFxRate && Number.isFinite(Number(esppFxRate))
         ? Number(esppFxRate)
@@ -454,9 +476,13 @@ export default function InvestmentsClient({ view = "investments" }) {
       fxRate && Number.isFinite(fxRate) && canSellValue != null
         ? canSellValue * fxRate
         : null;
+    const totalEsppHome =
+      fxRate && Number.isFinite(fxRate) && totalEsppValue != null
+        ? totalEsppValue * fxRate
+        : null;
     const profitLoss =
-      canSellHome !== null && Number.isFinite(totalInvestedHome)
-        ? canSellHome - totalInvestedHome
+      totalEsppHome !== null && Number.isFinite(totalInvestedHome)
+        ? totalEsppHome - totalInvestedHome
         : null;
     const profitLossPercent =
       profitLoss !== null && totalInvestedHome > 0
@@ -464,17 +490,27 @@ export default function InvestmentsClient({ view = "investments" }) {
         : null;
     return {
       sharesLeft,
+      remainingShares: normalizedRemainingShares,
       closeFmv,
+      realizedValue,
       totalInvestedHome,
       livePrice,
-      currentValueStock,
+      unrealizedValue,
+      totalEsppValue,
       estimatedTaxes,
       canSellValue,
       canSellHome,
+      totalEsppHome,
       profitLoss,
       profitLossPercent
     };
-  }, [esppFxRate, esppMarketQuote, esppPostCloseSummary]);
+  }, [
+    esppBatchValuations,
+    esppFxRate,
+    esppMarketQuote,
+    esppPostCloseSummary,
+    selectedEsppPeriodId
+  ]);
 
   const filteredActivity = useMemo(() => {
     if (activityInvestmentFilter === "all") {
@@ -762,6 +798,27 @@ export default function InvestmentsClient({ view = "investments" }) {
     }
   };
 
+  const loadEsppBatchValuation = async (periodId) => {
+    if (!periodId) {
+      return;
+    }
+    setEsppBatchValuationLoading(true);
+    setEsppBatchValuationError("");
+    try {
+      const response = await fetch(`/api/espp-batches/${periodId}/valuation`);
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.detail || "Failed to load ESPP batch valuation.");
+      }
+      const data = await response.json();
+      setEsppBatchValuations((prev) => ({ ...prev, [periodId]: data }));
+    } catch (err) {
+      setEsppBatchValuationError(err.message);
+    } finally {
+      setEsppBatchValuationLoading(false);
+    }
+  };
+
   const loadEsppCloseSummary = async (periodId, inputs) => {
     if (!periodId) {
       return;
@@ -912,6 +969,18 @@ export default function InvestmentsClient({ view = "investments" }) {
     selectedEsppPeriod?.status,
     esppClosedSummaries
   ]);
+
+  useEffect(() => {
+    if (!isEsppView) {
+      return;
+    }
+    if (!selectedEsppPeriodId || selectedEsppPeriod?.status !== "closed") {
+      setEsppBatchValuationLoading(false);
+      setEsppBatchValuationError("");
+      return;
+    }
+    loadEsppBatchValuation(selectedEsppPeriodId);
+  }, [isEsppView, selectedEsppPeriodId, selectedEsppPeriod?.status]);
 
   useEffect(() => {
     if (!isEsppView) {
@@ -1647,6 +1716,7 @@ export default function InvestmentsClient({ view = "investments" }) {
         throw new Error(data?.detail || "Failed to record ESPP sale.");
       }
       await loadEsppBatches(esppSellForm.batch_id);
+      await loadEsppBatchValuation(esppSellForm.batch_id);
       closeEsppSellModal();
     } catch (err) {
       setEsppSellError(err.message);
@@ -2362,9 +2432,19 @@ export default function InvestmentsClient({ view = "investments" }) {
                         Loading close summary...
                       </p>
                     ) : null}
+                    {esppBatchValuationLoading ? (
+                      <p className="text-sm text-slate-500">
+                        Loading batch valuation...
+                      </p>
+                    ) : null}
                     {esppClosureError ? (
                       <p className="text-sm text-rose-600">
                         {esppClosureError}
+                      </p>
+                    ) : null}
+                    {esppBatchValuationError ? (
+                      <p className="text-sm text-rose-600">
+                        {esppBatchValuationError}
                       </p>
                     ) : null}
                     {!esppPostCloseSummary && !esppClosureLoading ? (
@@ -2390,12 +2470,38 @@ export default function InvestmentsClient({ view = "investments" }) {
                           </div>
                           <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
                             <div className="text-xs text-slate-500">
-                              Current value ({selectedEsppPeriod.stock_currency})
+                              Unrealized value ({selectedEsppPeriod.stock_currency})
                             </div>
                             <div className="text-slate-900">
-                              {esppLiveMetrics?.currentValueStock != null
+                              {esppLiveMetrics?.unrealizedValue != null
                                 ? formatMoney(
-                                    esppLiveMetrics.currentValueStock,
+                                    esppLiveMetrics.unrealizedValue,
+                                    selectedEsppPeriod.stock_currency
+                                  )
+                                : "-"}
+                            </div>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                            <div className="text-xs text-slate-500">
+                              Realized value ({selectedEsppPeriod.stock_currency})
+                            </div>
+                            <div className="text-slate-900">
+                              {esppLiveMetrics?.realizedValue != null
+                                ? formatMoney(
+                                    esppLiveMetrics.realizedValue,
+                                    selectedEsppPeriod.stock_currency
+                                  )
+                                : "-"}
+                            </div>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                            <div className="text-xs text-slate-500">
+                              Total ESPP value ({selectedEsppPeriod.stock_currency})
+                            </div>
+                            <div className="text-slate-900">
+                              {esppLiveMetrics?.totalEsppValue != null
+                                ? formatMoney(
+                                    esppLiveMetrics.totalEsppValue,
                                     selectedEsppPeriod.stock_currency
                                   )
                                 : "-"}
