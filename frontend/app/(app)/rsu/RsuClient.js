@@ -23,6 +23,51 @@ import {
 } from "../../components/ui/table";
 import { CURRENCY_OPTIONS } from "../../../lib/currencies";
 
+const normalizeCurrencyValue = (value) =>
+  String(value || "").trim().toUpperCase();
+
+const formatMoney = (value, currency) => {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) {
+    return "-";
+  }
+  const normalizedCurrency = normalizeCurrencyValue(currency);
+  if (!normalizedCurrency) {
+    return amount.toFixed(2);
+  }
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: normalizedCurrency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(amount);
+  } catch (err) {
+    return `${amount.toFixed(2)} ${normalizedCurrency}`;
+  }
+};
+
+const formatPrice = (value, currency) => {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) {
+    return "-";
+  }
+  const normalizedCurrency = normalizeCurrencyValue(currency);
+  if (!normalizedCurrency) {
+    return amount.toFixed(5);
+  }
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: normalizedCurrency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 5
+    }).format(amount);
+  } catch (err) {
+    return `${amount.toFixed(5)} ${normalizedCurrency}`;
+  }
+};
+
 const buildGrantForm = (grantDate) => ({
   name: "",
   stock_ticker: "",
@@ -89,6 +134,12 @@ export default function RsuClient() {
   const [grantForm, setGrantForm] = useState(buildGrantForm(today));
   const [grantSaving, setGrantSaving] = useState(false);
   const [grantError, setGrantError] = useState("");
+  const [rsuValuation, setRsuValuation] = useState(null);
+  const [rsuValuationLoading, setRsuValuationLoading] = useState(false);
+  const [rsuValuationError, setRsuValuationError] = useState("");
+  const [rsuMarketQuote, setRsuMarketQuote] = useState(null);
+  const [rsuMarketLoading, setRsuMarketLoading] = useState(false);
+  const [rsuMarketError, setRsuMarketError] = useState("");
   const [addPeriodModalOpen, setAddPeriodModalOpen] = useState(false);
   const [addPeriodForm, setAddPeriodForm] = useState(
     buildVestingPeriodForm(today)
@@ -120,6 +171,11 @@ export default function RsuClient() {
     [grants, selectedGrantId]
   );
 
+  const rsuStockCurrency = useMemo(
+    () => selectedGrant?.stock_currency || rsuValuation?.stock_currency,
+    [rsuValuation?.stock_currency, selectedGrant?.stock_currency]
+  );
+
   const investmentAccounts = useMemo(
     () => accounts.filter((account) => account.type === "investment"),
     [accounts]
@@ -148,10 +204,74 @@ export default function RsuClient() {
     }
   }, []);
 
+  const loadRsuValuation = useCallback(async (grantId) => {
+    if (!grantId) {
+      setRsuValuation(null);
+      return;
+    }
+    setRsuValuationLoading(true);
+    setRsuValuationError("");
+    try {
+      const response = await fetch(`/api/rsu-grants/${grantId}/valuation`);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to load RSU valuation.");
+      }
+      setRsuValuation(data || null);
+    } catch (err) {
+      setRsuValuationError(err.message);
+      setRsuValuation(null);
+    } finally {
+      setRsuValuationLoading(false);
+    }
+  }, []);
+
   const hasVestedPeriods = useMemo(
     () => vestingPeriods.some((period) => period.status === "vested"),
     [vestingPeriods]
   );
+
+  const rsuLiveMetrics = useMemo(() => {
+    if (!rsuValuation) {
+      return null;
+    }
+    const remainingShares =
+      rsuValuation?.remaining_shares != null
+        ? Number(rsuValuation.remaining_shares)
+        : null;
+    const normalizedRemainingShares = Number.isFinite(remainingShares)
+      ? remainingShares
+      : null;
+    const realizedValue =
+      rsuValuation?.realized_value != null
+        ? Number(rsuValuation.realized_value)
+        : null;
+    const livePrice = Number(rsuMarketQuote?.price || 0);
+    if (!Number.isFinite(livePrice) || livePrice <= 0) {
+      return {
+        remainingShares: normalizedRemainingShares,
+        realizedValue,
+        livePrice: null,
+        unrealizedValue: null,
+        totalValue: null
+      };
+    }
+    const unrealizedValue =
+      normalizedRemainingShares != null
+        ? normalizedRemainingShares * livePrice
+        : null;
+    const totalValue =
+      realizedValue != null && unrealizedValue != null
+        ? realizedValue + unrealizedValue
+        : null;
+    return {
+      remainingShares: normalizedRemainingShares,
+      realizedValue,
+      livePrice,
+      unrealizedValue,
+      totalValue
+    };
+  }, [rsuMarketQuote?.price, rsuValuation]);
 
   useEffect(() => {
     const loadAccounts = async () => {
@@ -206,6 +326,15 @@ export default function RsuClient() {
   }, [loadVestingPeriods, selectedGrantId]);
 
   useEffect(() => {
+    if (!selectedGrantId || !hasVestedPeriods || vestingLoading) {
+      setRsuValuation(null);
+      setRsuValuationError("");
+      return;
+    }
+    loadRsuValuation(selectedGrantId);
+  }, [hasVestedPeriods, loadRsuValuation, selectedGrantId, vestingLoading]);
+
+  useEffect(() => {
     if (!vestModalOpen) {
       return;
     }
@@ -228,6 +357,59 @@ export default function RsuClient() {
       }));
     }
   }, [sellModalOpen, sellForm.account_id, investmentAccounts]);
+
+  useEffect(() => {
+    if (!selectedGrantId || !hasVestedPeriods || vestingLoading) {
+      setRsuMarketQuote(null);
+      setRsuMarketError("");
+      setRsuMarketLoading(false);
+      return;
+    }
+    const ticker = selectedGrant?.stock_ticker?.trim();
+    if (!ticker) {
+      setRsuMarketQuote(null);
+      setRsuMarketError("Stock ticker required for live pricing.");
+      setRsuMarketLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const loadMarket = async () => {
+      setRsuMarketLoading(true);
+      setRsuMarketError("");
+      try {
+        const response = await fetch(
+          `/api/market/quote?symbol=${encodeURIComponent(ticker)}`
+        );
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.detail || "Failed to load live price.");
+        }
+        if (!cancelled) {
+          setRsuMarketQuote(data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setRsuMarketError(err.message || "Failed to load live market data.");
+          setRsuMarketQuote(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setRsuMarketLoading(false);
+        }
+      }
+    };
+    loadMarket();
+    const interval = setInterval(loadMarket, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [
+    hasVestedPeriods,
+    selectedGrant?.stock_ticker,
+    selectedGrantId,
+    vestingLoading
+  ]);
 
   const openGrantModal = () => {
     setGrantForm(buildGrantForm(today));
@@ -444,6 +626,7 @@ export default function RsuClient() {
       }
       closeVestModal();
       await loadVestingPeriods(selectedGrantId);
+      await loadRsuValuation(selectedGrantId);
     } catch (err) {
       setVestError(err.message);
     } finally {
@@ -511,6 +694,7 @@ export default function RsuClient() {
             : period
         )
       );
+      await loadRsuValuation(selectedGrantId);
       closeSellModal();
     } catch (err) {
       setSellError(err.message);
@@ -681,6 +865,102 @@ export default function RsuClient() {
                 </TableBody>
               </Table>
             ) : null}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>RSU valuation</CardTitle>
+            <CardDescription>Live pricing refreshes every minute.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {!selectedGrantId ? (
+              <p className="text-sm text-slate-500">
+                Select a grant to view the valuation.
+              </p>
+            ) : !hasVestedPeriods ? (
+              <p className="text-sm text-slate-500">No vested RSU batches yet.</p>
+            ) : (
+              <>
+                {rsuValuationLoading ? (
+                  <p className="text-sm text-slate-500">
+                    Loading RSU valuation...
+                  </p>
+                ) : null}
+                {rsuMarketLoading ? (
+                  <p className="text-sm text-slate-500">
+                    Loading live price...
+                  </p>
+                ) : null}
+                {rsuValuationError ? (
+                  <p className="text-sm text-rose-600">{rsuValuationError}</p>
+                ) : null}
+                {rsuMarketError ? (
+                  <p className="text-sm text-rose-600">{rsuMarketError}</p>
+                ) : null}
+                {rsuValuation ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                      <div className="text-xs text-slate-500">
+                        Current price ({rsuStockCurrency || "currency"})
+                      </div>
+                      <div className="text-slate-900">
+                        {rsuLiveMetrics?.livePrice != null
+                          ? formatPrice(
+                              rsuLiveMetrics.livePrice,
+                              rsuStockCurrency
+                            )
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                      <div className="text-xs text-slate-500">
+                        Unrealized value ({rsuStockCurrency || "currency"})
+                      </div>
+                      <div className="text-slate-900">
+                        {rsuLiveMetrics?.unrealizedValue != null
+                          ? formatMoney(
+                              rsuLiveMetrics.unrealizedValue,
+                              rsuStockCurrency
+                            )
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                      <div className="text-xs text-slate-500">
+                        Realized value ({rsuStockCurrency || "currency"})
+                      </div>
+                      <div className="text-slate-900">
+                        {rsuLiveMetrics?.realizedValue != null
+                          ? formatMoney(
+                              rsuLiveMetrics.realizedValue,
+                              rsuStockCurrency
+                            )
+                          : "-"}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                      <div className="text-xs text-slate-500">
+                        Total RSU value ({rsuStockCurrency || "currency"})
+                      </div>
+                      <div className="text-slate-900">
+                        {rsuLiveMetrics?.totalValue != null
+                          ? formatMoney(
+                              rsuLiveMetrics.totalValue,
+                              rsuStockCurrency
+                            )
+                          : "-"}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+                {rsuMarketLoading ? (
+                  <p className="mt-3 text-xs text-slate-400">
+                    Fetching live market data...
+                  </p>
+                ) : null}
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
