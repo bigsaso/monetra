@@ -17,12 +17,14 @@ NEXTAUTH_SECRET=replace-with-a-long-random-string
 NEXTAUTH_URL=http://localhost:3000
 BACKEND_URL=http://backend:8000
 NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+ALPHAVANTAGE_API_KEY=your-api-key
 ```
 
 Notes:
 - `NEXTAUTH_SECRET` is required for NextAuth; use a long random value.
 - `BACKEND_URL` is used by server-side Next.js routes inside Docker.
 - `NEXT_PUBLIC_BACKEND_URL` is used by the browser to reach the backend.
+- `ALPHAVANTAGE_API_KEY` can be gotten for free from https://www.alphavantage.co/support/#api-key
 
 ```bash
 docker compose up --build
