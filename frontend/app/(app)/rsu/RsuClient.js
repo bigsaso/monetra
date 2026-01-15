@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import {
@@ -122,6 +122,7 @@ const formatShortDate = (value) => {
 export default function RsuClient() {
   const today = useMemo(() => formatDateInput(new Date()), []);
   const [grants, setGrants] = useState([]);
+  const [homeCurrency, setHomeCurrency] = useState("USD");
   const [grantsLoading, setGrantsLoading] = useState(true);
   const [grantsError, setGrantsError] = useState("");
   const [selectedGrantId, setSelectedGrantId] = useState("");
@@ -140,6 +141,9 @@ export default function RsuClient() {
   const [rsuMarketQuote, setRsuMarketQuote] = useState(null);
   const [rsuMarketLoading, setRsuMarketLoading] = useState(false);
   const [rsuMarketError, setRsuMarketError] = useState("");
+  const [rsuFxRate, setRsuFxRate] = useState(null);
+  const [rsuFxLoading, setRsuFxLoading] = useState(false);
+  const [rsuFxError, setRsuFxError] = useState("");
   const [addPeriodModalOpen, setAddPeriodModalOpen] = useState(false);
   const [addPeriodForm, setAddPeriodForm] = useState(
     buildVestingPeriodForm(today)
@@ -156,6 +160,7 @@ export default function RsuClient() {
   const [sellForm, setSellForm] = useState(buildSellForm(""));
   const [sellSaving, setSellSaving] = useState(false);
   const [sellError, setSellError] = useState("");
+  const rsuRefreshRef = useRef(null);
 
   const quantityFormatter = useMemo(
     () =>
@@ -174,6 +179,11 @@ export default function RsuClient() {
   const rsuStockCurrency = useMemo(
     () => selectedGrant?.stock_currency || rsuValuation?.stock_currency,
     [rsuValuation?.stock_currency, selectedGrant?.stock_currency]
+  );
+
+  const resolvedHomeCurrency = useMemo(
+    () => normalizeCurrencyValue(homeCurrency),
+    [homeCurrency]
   );
 
   const investmentAccounts = useMemo(
@@ -270,22 +280,50 @@ export default function RsuClient() {
       realizedValue != null && unrealizedValue != null
         ? realizedValue + unrealizedValue
         : null;
+    const fxRate =
+      rsuFxRate && Number.isFinite(Number(rsuFxRate))
+        ? Number(rsuFxRate)
+        : null;
+    const totalValueHome =
+      fxRate && Number.isFinite(fxRate) && totalValue != null
+        ? totalValue * fxRate
+        : null;
     return {
       realizedValue,
       livePrice: normalizedLivePrice,
       unrealizedValue,
       potentialValue,
-      totalValue
+      totalValue,
+      totalValueHome
     };
   }, [
     hasUnvestedPeriods,
     hasVestedPeriods,
+    rsuFxRate,
     rsuMarketQuote?.price,
     rsuValuation,
     vestingPeriods
   ]);
 
   useEffect(() => {
+    const loadHomeCurrency = async () => {
+      try {
+        const response = await fetch("/api/user-settings");
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data?.detail || "Failed to load user settings.");
+        }
+        const data = await response.json();
+        const resolved = String(data?.home_currency || "").trim().toUpperCase();
+        if (resolved) {
+          setHomeCurrency(resolved);
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(err);
+      }
+    };
+
     const loadAccounts = async () => {
       try {
         const response = await fetch("/api/accounts");
@@ -316,6 +354,7 @@ export default function RsuClient() {
       }
     };
 
+    loadHomeCurrency();
     loadAccounts();
     loadGrants();
   }, []);
@@ -375,53 +414,111 @@ export default function RsuClient() {
       setRsuMarketQuote(null);
       setRsuMarketError("");
       setRsuMarketLoading(false);
+      setRsuFxRate(null);
+      setRsuFxError("");
+      setRsuFxLoading(false);
       return;
     }
     const ticker = selectedGrant?.stock_ticker?.trim();
+    const stockCurrency = normalizeCurrencyValue(selectedGrant?.stock_currency);
+    const targetCurrency = normalizeCurrencyValue(resolvedHomeCurrency);
     if (!ticker) {
       setRsuMarketQuote(null);
       setRsuMarketError("Stock ticker required for live pricing.");
       setRsuMarketLoading(false);
+      setRsuFxLoading(false);
       return;
     }
     let cancelled = false;
     const loadMarket = async () => {
       setRsuMarketLoading(true);
+      setRsuFxLoading(true);
       setRsuMarketError("");
+      setRsuFxError("");
       try {
-        const response = await fetch(
+        const quoteRequest = fetch(
           `/api/market/quote?symbol=${encodeURIComponent(ticker)}`
         );
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data?.detail || "Failed to load live price.");
-        }
+        const fxRequest =
+          !stockCurrency ||
+          !targetCurrency ||
+          stockCurrency === targetCurrency
+            ? Promise.resolve({ rate: 1 })
+            : fetch(
+                `/api/market/fx?base=${encodeURIComponent(
+                  stockCurrency
+                )}&target=${encodeURIComponent(targetCurrency)}`
+              );
+        const [quoteResponse, fxResponse] = await Promise.all([
+          quoteRequest,
+          fxRequest
+        ]);
         if (!cancelled) {
-          setRsuMarketQuote(data);
+          if (quoteResponse?.ok) {
+            const quoteData = await quoteResponse.json();
+            setRsuMarketQuote(quoteData);
+          } else {
+            const quoteError = await quoteResponse.json();
+            throw new Error(quoteError?.detail || "Failed to load live price.");
+          }
+          if (fxResponse?.rate === 1) {
+            setRsuFxRate(1);
+          } else if (fxResponse?.ok) {
+            const fxData = await fxResponse.json();
+            if (typeof fxData?.rate === "number") {
+              setRsuFxRate(fxData.rate);
+            } else {
+              setRsuFxRate(null);
+              setRsuFxError("Live FX rate unavailable.");
+            }
+          } else if (stockCurrency === targetCurrency) {
+            setRsuFxRate(1);
+          } else {
+            setRsuFxRate(null);
+            setRsuFxError("Live FX rate unavailable.");
+          }
         }
       } catch (err) {
         if (!cancelled) {
           const baseMessage =
             err.message || "Failed to load live market data.";
           const nextMessage = baseMessage.includes("Quote unavailable.")
-            ? `${baseMessage} This could be caused by rate limiting. Retrying in 1 minute.`
+            ? `${baseMessage} This could be caused by rate limiting. Retrying on next refresh.`
             : baseMessage;
           setRsuMarketError(nextMessage);
           setRsuMarketQuote(null);
+          setRsuFxRate(null);
         }
       } finally {
         if (!cancelled) {
           setRsuMarketLoading(false);
+          setRsuFxLoading(false);
         }
       }
     };
     loadMarket();
-    const interval = setInterval(loadMarket, 60000);
+    rsuRefreshRef.current = loadMarket;
+    const interval = setInterval(loadMarket, 1800000);
     return () => {
       cancelled = true;
+      if (rsuRefreshRef.current === loadMarket) {
+        rsuRefreshRef.current = null;
+      }
       clearInterval(interval);
     };
-  }, [selectedGrant?.stock_ticker, selectedGrantId, vestingLoading]);
+  }, [
+    resolvedHomeCurrency,
+    selectedGrant?.stock_currency,
+    selectedGrant?.stock_ticker,
+    selectedGrantId,
+    vestingLoading
+  ]);
+
+  const handleRsuRefresh = () => {
+    if (rsuRefreshRef.current) {
+      rsuRefreshRef.current();
+    }
+  };
 
   const openGrantModal = () => {
     setGrantForm(buildGrantForm(today));
@@ -882,8 +979,25 @@ export default function RsuClient() {
 
         <Card>
           <CardHeader>
-            <CardTitle>RSU valuation</CardTitle>
-            <CardDescription>Live pricing refreshes every minute.</CardDescription>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <CardTitle>RSU valuation</CardTitle>
+                <CardDescription>
+                  Live pricing and FX refresh every 30 minutes.
+                </CardDescription>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleRsuRefresh}
+                disabled={
+                  !selectedGrantId || rsuMarketLoading || rsuFxLoading
+                }
+              >
+                Refresh now
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             {!selectedGrantId ? (
@@ -902,11 +1016,17 @@ export default function RsuClient() {
                     Loading live price...
                   </p>
                 ) : null}
+                {rsuFxLoading ? (
+                  <p className="text-sm text-slate-500">Loading live FX...</p>
+                ) : null}
                 {rsuValuationError ? (
                   <p className="text-sm text-rose-600">{rsuValuationError}</p>
                 ) : null}
                 {rsuMarketError ? (
                   <p className="text-sm text-rose-600">{rsuMarketError}</p>
+                ) : null}
+                {rsuFxError ? (
+                  <p className="text-sm text-rose-600">{rsuFxError}</p>
                 ) : null}
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
@@ -988,6 +1108,25 @@ export default function RsuClient() {
                         formatMoney(
                           rsuLiveMetrics.totalValue,
                           rsuStockCurrency
+                        )
+                      ) : (
+                        "-"
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                    <div className="text-xs text-slate-500">
+                      Total value ({resolvedHomeCurrency || "home currency"})
+                    </div>
+                    <div className="text-slate-900">
+                      {!hasVestedPeriods ? (
+                        <span className="text-slate-400">
+                          No vested batches yet.
+                        </span>
+                      ) : rsuLiveMetrics?.totalValueHome != null ? (
+                        formatMoney(
+                          rsuLiveMetrics.totalValueHome,
+                          resolvedHomeCurrency
                         )
                       ) : (
                         "-"

@@ -271,6 +271,7 @@ export default function InvestmentsClient({ view = "investments" }) {
   const esppSummaryTimer = useRef(null);
   const esppOpenFmvSaveTimer = useRef(null);
   const esppCloseSummaryTimer = useRef(null);
+  const esppRefreshRef = useRef(null);
 
   const currencyFormatter = useMemo(
     () =>
@@ -1058,7 +1059,7 @@ export default function InvestmentsClient({ view = "investments" }) {
           const baseMessage =
             err.message || "Failed to load live market data.";
           const nextMessage = baseMessage.includes("Quote unavailable.")
-            ? `${baseMessage} This could be caused by rate limiting. Retrying in 1 minute.`
+            ? `${baseMessage} This could be caused by rate limiting. Retrying on next refresh.`
             : baseMessage;
           setEsppMarketError(nextMessage);
           setEsppMarketQuote(null);
@@ -1072,9 +1073,13 @@ export default function InvestmentsClient({ view = "investments" }) {
       }
     };
     loadMarket();
-    const interval = setInterval(loadMarket, 60000);
+    esppRefreshRef.current = loadMarket;
+    const interval = setInterval(loadMarket, 1800000);
     return () => {
       cancelled = true;
+      if (esppRefreshRef.current === loadMarket) {
+        esppRefreshRef.current = null;
+      }
       clearInterval(interval);
     };
   }, [
@@ -1085,6 +1090,12 @@ export default function InvestmentsClient({ view = "investments" }) {
     selectedEsppPeriod?.stock_ticker,
     selectedEsppPeriodId
   ]);
+
+  const handleEsppRefresh = () => {
+    if (esppRefreshRef.current) {
+      esppRefreshRef.current();
+    }
+  };
 
   useEffect(
     () => () => {
@@ -2412,14 +2423,29 @@ export default function InvestmentsClient({ view = "investments" }) {
                 <div>
                   <CardTitle>ESPP valuation</CardTitle>
                   <CardDescription>
-                    Live pricing and FX refresh every minute.
+                    Live pricing and FX refresh every 30 minutes.
                   </CardDescription>
                 </div>
-                {selectedEsppPeriod?.status === "closed" ? (
-                  <Button type="button" variant="outline" asChild>
-                    <Link href="/investments">Go to Investments</Link>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleEsppRefresh}
+                    disabled={
+                      selectedEsppPeriod?.status !== "closed" ||
+                      esppMarketLoading ||
+                      esppFxLoading
+                    }
+                  >
+                    Refresh now
                   </Button>
-                ) : null}
+                  {selectedEsppPeriod?.status === "closed" ? (
+                    <Button type="button" variant="outline" asChild>
+                      <Link href="/investments">Go to Investments</Link>
+                    </Button>
+                  ) : null}
+                </div>
               </CardHeader>
               <CardContent>
                 {!selectedEsppPeriod ? (
