@@ -1,7 +1,7 @@
 import calendar
 import os
 from datetime import date, datetime, timedelta
-from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_UP
 
 import bcrypt
 from fastapi import FastAPI, HTTPException, Header, Query, UploadFile, File
@@ -243,6 +243,39 @@ espp_closure = Table(
     Column("closed_at", DateTime),
 )
 
+rsu_grants = Table(
+    "rsu_grants",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
+    Column("name", String(255), nullable=False),
+    Column("stock_ticker", String(50), nullable=False),
+    Column("stock_currency", String(3), nullable=False),
+    Column("grant_date", Date, nullable=False),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+)
+
+rsu_vesting_periods = Table(
+    "rsu_vesting_periods",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("rsu_grant_id", Integer, ForeignKey("rsu_grants.id"), nullable=False),
+    Column("vest_date", Date, nullable=False),
+    Column("granted_quantity", Numeric(18, 8), nullable=False),
+    Column("price_at_vesting", Numeric(12, 5)),
+    Column("status", String(10), nullable=False, server_default="unvested"),
+    Column("shares_withheld", Numeric(18, 8)),
+    Column("shares_left", Numeric(18, 8)),
+    Column("shares_available", Numeric(18, 8)),
+    Column("value_at_vesting", Numeric(12, 2)),
+    Column("taxes_to_pay", Numeric(12, 2)),
+    Column("taxes_paid", Numeric(12, 2)),
+    Column("taxes_paid_with_shares", Numeric(12, 2)),
+    Column("refunded_from_taxes", Numeric(12, 2)),
+    Column("investment_entry_id", Integer, ForeignKey("investment_entries.id")),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+)
+
 @app.on_event("startup")
 def init_db() -> None:
     metadata.create_all(engine)
@@ -336,12 +369,24 @@ class EsppPeriodStatus:
         return normalized
 
 
+class RsuVestingStatus:
+    values = {"unvested", "vested"}
+
+    @classmethod
+    def validate(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in cls.values:
+            raise ValueError("Invalid RSU vesting status.")
+        return normalized
+
+
 ESPP_PRICE_QUANT = Decimal("0.00001")
 ESPP_MONEY_QUANT = Decimal("0.01")
 ESPP_FX_QUANT = Decimal("0.000001")
 ESPP_SHARES_QUANT = Decimal("0.00000001")
 ESPP_DISCOUNT_RATE = Decimal("0.85")
 ESPP_TAX_RATE = Decimal("0.47")
+RSU_TAX_RATE = Decimal("0.47")
 
 
 class CategoryGroup:
@@ -874,6 +919,136 @@ class EsppSellResponse(BaseModel):
     proceeds: Decimal
     cost_of_sold_shares: Decimal
     realized_profit_loss: Decimal
+
+
+class RsuGrantPayload(BaseModel):
+    name: str
+    stock_ticker: str
+    stock_currency: str
+    grant_date: date
+
+    @classmethod
+    def validate_payload(cls, payload: "RsuGrantPayload") -> "RsuGrantPayload":
+        payload.name = payload.name.strip()
+        if not payload.name:
+            raise ValueError("RSU grant name required.")
+        payload.stock_ticker = payload.stock_ticker.strip().upper()
+        if not payload.stock_ticker:
+            raise ValueError("Stock ticker required.")
+        payload.stock_currency = normalize_currency(payload.stock_currency)
+        return payload
+
+
+class RsuGrantResponse(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    stock_ticker: str
+    stock_currency: str
+    grant_date: date
+    created_at: datetime | None = None
+
+
+class RsuVestingPeriodPayload(BaseModel):
+    vest_date: date
+    granted_quantity: Decimal
+    price_at_vesting: Decimal | None = None
+    status: str | None = None
+    shares_withheld: Decimal | None = None
+    shares_left: Decimal | None = None
+    shares_available: Decimal | None = None
+    value_at_vesting: Decimal | None = None
+    taxes_to_pay: Decimal | None = None
+    taxes_paid: Decimal | None = None
+    taxes_paid_with_shares: Decimal | None = None
+    refunded_from_taxes: Decimal | None = None
+    investment_entry_id: int | None = None
+
+    @classmethod
+    def validate_payload(cls, payload: "RsuVestingPeriodPayload") -> "RsuVestingPeriodPayload":
+        if payload.granted_quantity < 0:
+            raise ValueError("Granted quantity cannot be negative.")
+        for field_name in (
+            "price_at_vesting",
+            "shares_withheld",
+            "shares_left",
+            "shares_available",
+            "value_at_vesting",
+            "taxes_to_pay",
+            "taxes_paid",
+            "taxes_paid_with_shares",
+            "refunded_from_taxes",
+        ):
+            value = getattr(payload, field_name)
+            if value is not None and value < 0:
+                raise ValueError(f"{field_name.replace('_', ' ').title()} cannot be negative.")
+        if payload.status is not None:
+            payload.status = RsuVestingStatus.validate(payload.status)
+        return payload
+
+
+class RsuVestingPeriodResponse(BaseModel):
+    id: int
+    rsu_grant_id: int
+    vest_date: date
+    granted_quantity: Decimal
+    price_at_vesting: Decimal | None = None
+    status: str
+    shares_withheld: Decimal | None = None
+    shares_left: Decimal | None = None
+    shares_available: Decimal | None = None
+    value_at_vesting: Decimal | None = None
+    taxes_to_pay: Decimal | None = None
+    taxes_paid: Decimal | None = None
+    taxes_paid_with_shares: Decimal | None = None
+    refunded_from_taxes: Decimal | None = None
+    investment_entry_id: int | None = None
+    created_at: datetime | None = None
+
+
+class RsuVestPayload(BaseModel):
+    vest_date: date
+    price_at_vesting: Decimal
+    account_id: int | None = None
+
+    @classmethod
+    def validate_payload(cls, payload: "RsuVestPayload") -> "RsuVestPayload":
+        if payload.price_at_vesting <= 0:
+            raise ValueError("Price at vesting must be greater than zero.")
+        return payload
+
+
+class RsuSellPayload(BaseModel):
+    quantity: Decimal
+    price: Decimal
+    sell_date: date
+    account_id: int | None = None
+
+    @classmethod
+    def validate_payload(cls, payload: "RsuSellPayload") -> "RsuSellPayload":
+        if payload.quantity <= 0:
+            raise ValueError("Sell quantity must be greater than zero.")
+        if payload.price <= 0:
+            raise ValueError("Sell price must be greater than zero.")
+        if payload.account_id is not None and payload.account_id <= 0:
+            raise ValueError("Account is required.")
+        return payload
+
+
+class RsuSellResponse(BaseModel):
+    period_id: int
+    transaction_id: int
+    investment_entry_id: int
+    shares_remaining: Decimal
+    proceeds: Decimal
+    cost_of_sold_shares: Decimal
+    realized_profit_loss: Decimal
+
+
+class RsuGrantValuationResponse(BaseModel):
+    stock_currency: str
+    remaining_shares: Decimal
+    realized_value: Decimal
 
 
 class TransactionImportPreviewResponse(BaseModel):
@@ -3232,6 +3407,671 @@ def delete_espp_deposit(deposit_id: int, x_user_id: str | None = Header(None, al
             raise HTTPException(status_code=404, detail="ESPP deposit not found.")
         conn.execute(espp_deposits.delete().where(espp_deposits.c.id == deposit_id))
     return {"status": "deleted"}
+
+
+@app.post("/rsu-grants", response_model=RsuGrantResponse)
+def create_rsu_grant(
+    payload: RsuGrantPayload, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> RsuGrantResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = RsuGrantPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    stmt = (
+        insert(rsu_grants)
+        .values(
+            user_id=user_id,
+            name=payload.name,
+            stock_ticker=payload.stock_ticker,
+            stock_currency=payload.stock_currency,
+            grant_date=payload.grant_date,
+        )
+        .returning(
+            rsu_grants.c.id,
+            rsu_grants.c.user_id,
+            rsu_grants.c.name,
+            rsu_grants.c.stock_ticker,
+            rsu_grants.c.stock_currency,
+            rsu_grants.c.grant_date,
+            rsu_grants.c.created_at,
+        )
+    )
+    with engine.begin() as conn:
+        row = conn.execute(stmt).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create RSU grant.")
+    return RsuGrantResponse(
+        id=row["id"],
+        user_id=row["user_id"],
+        name=row["name"],
+        stock_ticker=row["stock_ticker"],
+        stock_currency=row["stock_currency"],
+        grant_date=row["grant_date"],
+        created_at=row["created_at"],
+    )
+
+
+@app.get("/rsu-grants", response_model=list[RsuGrantResponse])
+def list_rsu_grants(x_user_id: str | None = Header(None, alias="x-user-id")) -> list[RsuGrantResponse]:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(rsu_grants)
+            .where(rsu_grants.c.user_id == user_id)
+            .order_by(rsu_grants.c.grant_date.desc(), rsu_grants.c.id.desc())
+        ).mappings().all()
+    return [
+        RsuGrantResponse(
+            id=row["id"],
+            user_id=row["user_id"],
+            name=row["name"],
+            stock_ticker=row["stock_ticker"],
+            stock_currency=row["stock_currency"],
+            grant_date=row["grant_date"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+@app.get("/rsu-grants/{grant_id}/vesting-periods", response_model=list[RsuVestingPeriodResponse])
+def list_rsu_vesting_periods(
+    grant_id: int, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> list[RsuVestingPeriodResponse]:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        grant = conn.execute(
+            select(rsu_grants.c.id).where(rsu_grants.c.id == grant_id, rsu_grants.c.user_id == user_id)
+        ).first()
+        if not grant:
+            raise HTTPException(status_code=404, detail="RSU grant not found.")
+        rows = conn.execute(
+            select(rsu_vesting_periods)
+            .where(rsu_vesting_periods.c.rsu_grant_id == grant_id)
+            .order_by(rsu_vesting_periods.c.vest_date.asc(), rsu_vesting_periods.c.id.asc())
+        ).mappings().all()
+    return [
+        RsuVestingPeriodResponse(
+            id=row["id"],
+            rsu_grant_id=row["rsu_grant_id"],
+            vest_date=row["vest_date"],
+            granted_quantity=row["granted_quantity"],
+            price_at_vesting=row["price_at_vesting"],
+            status=row["status"],
+            shares_withheld=row["shares_withheld"],
+            shares_left=row["shares_left"],
+            shares_available=row["shares_available"],
+            value_at_vesting=row["value_at_vesting"],
+            taxes_to_pay=row["taxes_to_pay"],
+            taxes_paid=row["taxes_paid"],
+            taxes_paid_with_shares=row["taxes_paid_with_shares"],
+            refunded_from_taxes=row["refunded_from_taxes"],
+            investment_entry_id=row["investment_entry_id"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+@app.get("/rsu-grants/{grant_id}/valuation", response_model=RsuGrantValuationResponse)
+def get_rsu_grant_valuation(
+    grant_id: int,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> RsuGrantValuationResponse:
+    user_id = get_user_id(x_user_id)
+
+    with engine.begin() as conn:
+        grant_row = conn.execute(
+            select(
+                rsu_grants.c.id,
+                rsu_grants.c.stock_ticker,
+                rsu_grants.c.stock_currency,
+            ).where(rsu_grants.c.id == grant_id, rsu_grants.c.user_id == user_id)
+        ).mappings().first()
+        if not grant_row:
+            raise HTTPException(status_code=404, detail="RSU grant not found.")
+
+        remaining_row = conn.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        func.coalesce(
+                            rsu_vesting_periods.c.shares_available,
+                            rsu_vesting_periods.c.shares_left,
+                            rsu_vesting_periods.c.granted_quantity,
+                        )
+                    ),
+                    0,
+                ).label("remaining_shares")
+            ).where(rsu_vesting_periods.c.rsu_grant_id == grant_id)
+        ).mappings().first()
+
+        remaining_shares = coerce_decimal(remaining_row["remaining_shares"]).quantize(
+            ESPP_SHARES_QUANT
+        )
+
+        investment_name = f"RSU ({grant_row['stock_ticker']})"
+        investment_id = conn.execute(
+            select(investments.c.id).where(
+                investments.c.user_id == user_id, investments.c.name == investment_name
+            )
+        ).scalar_one_or_none()
+
+        realized_value = Decimal("0")
+        if investment_id is not None:
+            realized_row = conn.execute(
+                select(
+                    func.coalesce(
+                        func.sum(
+                            investment_entries.c.quantity
+                            * func.coalesce(
+                                investment_entries.c.price_per_share,
+                                investment_entries.c.price,
+                            )
+                        ),
+                        0,
+                    ).label("realized_value")
+                ).where(
+                    investment_entries.c.user_id == user_id,
+                    investment_entries.c.investment_id == investment_id,
+                    investment_entries.c.source == "rsu",
+                    investment_entries.c.type == "sell",
+                )
+            ).mappings().first()
+            realized_value = coerce_decimal(realized_row["realized_value"])
+
+        realized_value = realized_value.quantize(ESPP_MONEY_QUANT)
+
+    return RsuGrantValuationResponse(
+        stock_currency=grant_row["stock_currency"],
+        remaining_shares=remaining_shares,
+        realized_value=realized_value,
+    )
+
+
+@app.post("/rsu-grants/{grant_id}/vesting-periods", response_model=RsuVestingPeriodResponse)
+def create_rsu_vesting_period(
+    grant_id: int,
+    payload: RsuVestingPeriodPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> RsuVestingPeriodResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = RsuVestingPeriodPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    status = payload.status or "unvested"
+    with engine.begin() as conn:
+        grant = conn.execute(
+            select(rsu_grants.c.id).where(rsu_grants.c.id == grant_id, rsu_grants.c.user_id == user_id)
+        ).first()
+        if not grant:
+            raise HTTPException(status_code=404, detail="RSU grant not found.")
+        stmt = (
+            insert(rsu_vesting_periods)
+            .values(
+                rsu_grant_id=grant_id,
+                vest_date=payload.vest_date,
+                granted_quantity=payload.granted_quantity,
+                price_at_vesting=payload.price_at_vesting,
+                status=status,
+                shares_withheld=payload.shares_withheld,
+                shares_left=payload.shares_left,
+                shares_available=payload.shares_available,
+                value_at_vesting=payload.value_at_vesting,
+                taxes_to_pay=payload.taxes_to_pay,
+                taxes_paid=payload.taxes_paid,
+                taxes_paid_with_shares=payload.taxes_paid_with_shares,
+                refunded_from_taxes=payload.refunded_from_taxes,
+                investment_entry_id=payload.investment_entry_id,
+            )
+            .returning(
+                rsu_vesting_periods.c.id,
+                rsu_vesting_periods.c.rsu_grant_id,
+                rsu_vesting_periods.c.vest_date,
+                rsu_vesting_periods.c.granted_quantity,
+                rsu_vesting_periods.c.price_at_vesting,
+                rsu_vesting_periods.c.status,
+                rsu_vesting_periods.c.shares_withheld,
+                rsu_vesting_periods.c.shares_left,
+                rsu_vesting_periods.c.shares_available,
+                rsu_vesting_periods.c.value_at_vesting,
+                rsu_vesting_periods.c.taxes_to_pay,
+                rsu_vesting_periods.c.taxes_paid,
+                rsu_vesting_periods.c.taxes_paid_with_shares,
+                rsu_vesting_periods.c.refunded_from_taxes,
+                rsu_vesting_periods.c.investment_entry_id,
+                rsu_vesting_periods.c.created_at,
+            )
+        )
+        row = conn.execute(stmt).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create RSU vesting period.")
+    return RsuVestingPeriodResponse(
+        id=row["id"],
+        rsu_grant_id=row["rsu_grant_id"],
+        vest_date=row["vest_date"],
+        granted_quantity=row["granted_quantity"],
+        price_at_vesting=row["price_at_vesting"],
+        status=row["status"],
+        shares_withheld=row["shares_withheld"],
+        shares_left=row["shares_left"],
+        shares_available=row["shares_available"],
+        value_at_vesting=row["value_at_vesting"],
+        taxes_to_pay=row["taxes_to_pay"],
+        taxes_paid=row["taxes_paid"],
+        taxes_paid_with_shares=row["taxes_paid_with_shares"],
+        refunded_from_taxes=row["refunded_from_taxes"],
+        investment_entry_id=row["investment_entry_id"],
+        created_at=row["created_at"],
+    )
+
+
+@app.post(
+    "/rsu-grants/{grant_id}/vesting-periods/{period_id}/vest",
+    response_model=RsuVestingPeriodResponse,
+)
+def vest_rsu_vesting_period(
+    grant_id: int,
+    period_id: int,
+    payload: RsuVestPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> RsuVestingPeriodResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = RsuVestPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        grant_row = conn.execute(
+            select(
+                rsu_grants.c.id,
+                rsu_grants.c.stock_ticker,
+                rsu_grants.c.stock_currency,
+            ).where(rsu_grants.c.id == grant_id, rsu_grants.c.user_id == user_id)
+        ).mappings().first()
+        if not grant_row:
+            raise HTTPException(status_code=404, detail="RSU grant not found.")
+        vesting_row = conn.execute(
+            select(
+                rsu_vesting_periods.c.id,
+                rsu_vesting_periods.c.status,
+                rsu_vesting_periods.c.granted_quantity,
+            ).where(
+                rsu_vesting_periods.c.id == period_id,
+                rsu_vesting_periods.c.rsu_grant_id == grant_id,
+            )
+        ).mappings().first()
+        if not vesting_row:
+            raise HTTPException(status_code=404, detail="RSU vesting period not found.")
+        if vesting_row["status"] != "unvested":
+            raise HTTPException(status_code=400, detail="RSU vesting period is already vested.")
+        if vesting_row["granted_quantity"] <= 0:
+            raise HTTPException(status_code=400, detail="Granted quantity must be greater than zero.")
+
+        account_id = payload.account_id
+        if account_id is None:
+            investment_accounts = conn.execute(
+                select(accounts.c.id)
+                .where(accounts.c.user_id == user_id, accounts.c.type == "investment")
+                .order_by(accounts.c.id.asc())
+            ).scalars().all()
+            if len(investment_accounts) == 1:
+                account_id = investment_accounts[0]
+            elif not investment_accounts:
+                raise HTTPException(status_code=400, detail="No investment account available for RSU vesting.")
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Account required when multiple investment accounts exist.",
+                )
+        account_exists = conn.execute(
+            select(accounts.c.id).where(accounts.c.id == account_id, accounts.c.user_id == user_id)
+        ).first()
+        if not account_exists:
+            raise HTTPException(status_code=404, detail="Account not found.")
+
+        granted_quantity = Decimal(vesting_row["granted_quantity"])
+        price_at_vesting = payload.price_at_vesting
+        value_at_vesting = (granted_quantity * price_at_vesting).quantize(ESPP_MONEY_QUANT)
+        taxes_to_pay = (value_at_vesting * RSU_TAX_RATE).quantize(ESPP_MONEY_QUANT)
+        shares_withheld = (taxes_to_pay / price_at_vesting).quantize(Decimal("1"), rounding=ROUND_UP)
+        taxes_paid_with_shares = (shares_withheld * price_at_vesting).quantize(ESPP_MONEY_QUANT)
+        refunded_from_taxes = (taxes_paid_with_shares - taxes_to_pay).quantize(ESPP_MONEY_QUANT)
+        shares_left = (granted_quantity - shares_withheld).quantize(ESPP_SHARES_QUANT)
+        if shares_left <= 0:
+            raise HTTPException(status_code=400, detail="RSU shares left must be greater than zero.")
+        shares_available = shares_left
+
+        category_name = "RSU"
+        category_exists = conn.execute(
+            select(categories.c.id).where(
+                categories.c.user_id == user_id, categories.c.name == category_name
+            )
+        ).mappings().first()
+        if not category_exists:
+            conn.execute(
+                insert(categories).values(
+                    user_id=user_id,
+                    name=category_name,
+                    group="investments",
+                )
+            )
+
+        investment_name = f"RSU ({grant_row['stock_ticker']})"
+        investment_row = conn.execute(
+            select(investments.c.id).where(
+                investments.c.user_id == user_id, investments.c.name == investment_name
+            )
+        ).mappings().first()
+        if not investment_row:
+            investment_row = conn.execute(
+                insert(investments)
+                .values(
+                    user_id=user_id,
+                    name=investment_name,
+                    symbol=grant_row["stock_ticker"],
+                    asset_type="stock",
+                )
+                .returning(investments.c.id)
+            ).mappings().first()
+        if not investment_row:
+            raise HTTPException(status_code=500, detail="Failed to create investment.")
+        investment_id = investment_row["id"]
+
+        total_amount = (shares_left * price_at_vesting).quantize(ESPP_MONEY_QUANT)
+        txn_row = conn.execute(
+            insert(transactions)
+            .values(
+                user_id=user_id,
+                account_id=account_id,
+                amount=total_amount,
+                currency=grant_row["stock_currency"],
+                type="expense",
+                category=category_name,
+                date=payload.vest_date,
+                notes=None,
+            )
+            .returning(transactions.c.id)
+        ).mappings().first()
+        if not txn_row:
+            raise HTTPException(status_code=500, detail="Failed to create transaction.")
+        transaction_id = txn_row["id"]
+
+        entry_row = conn.execute(
+            insert(investment_entries)
+            .values(
+                user_id=user_id,
+                investment_id=investment_id,
+                transaction_id=transaction_id,
+                quantity=shares_left,
+                price=price_at_vesting,
+                price_per_share=price_at_vesting,
+                total_amount=total_amount,
+                currency=grant_row["stock_currency"],
+                source="rsu",
+                type="buy",
+                date=payload.vest_date,
+            )
+            .returning(investment_entries.c.id)
+        ).mappings().first()
+        if not entry_row:
+            raise HTTPException(status_code=500, detail="Failed to create investment entry.")
+        investment_entry_id = entry_row["id"]
+        try:
+            recalculate_investment_position(conn, user_id, investment_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        update_row = conn.execute(
+            update(rsu_vesting_periods)
+            .where(
+                rsu_vesting_periods.c.id == period_id,
+                rsu_vesting_periods.c.rsu_grant_id == grant_id,
+            )
+            .values(
+                vest_date=payload.vest_date,
+                price_at_vesting=price_at_vesting,
+                status="vested",
+                shares_withheld=shares_withheld,
+                shares_left=shares_left,
+                shares_available=shares_available,
+                value_at_vesting=value_at_vesting,
+                taxes_to_pay=taxes_to_pay,
+                taxes_paid=taxes_paid_with_shares,
+                taxes_paid_with_shares=taxes_paid_with_shares,
+                refunded_from_taxes=refunded_from_taxes,
+                investment_entry_id=investment_entry_id,
+            )
+            .returning(
+                rsu_vesting_periods.c.id,
+                rsu_vesting_periods.c.rsu_grant_id,
+                rsu_vesting_periods.c.vest_date,
+                rsu_vesting_periods.c.granted_quantity,
+                rsu_vesting_periods.c.price_at_vesting,
+                rsu_vesting_periods.c.status,
+                rsu_vesting_periods.c.shares_withheld,
+                rsu_vesting_periods.c.shares_left,
+                rsu_vesting_periods.c.shares_available,
+                rsu_vesting_periods.c.value_at_vesting,
+                rsu_vesting_periods.c.taxes_to_pay,
+                rsu_vesting_periods.c.taxes_paid,
+                rsu_vesting_periods.c.taxes_paid_with_shares,
+                rsu_vesting_periods.c.refunded_from_taxes,
+                rsu_vesting_periods.c.investment_entry_id,
+                rsu_vesting_periods.c.created_at,
+            )
+        ).mappings().first()
+
+    if not update_row:
+        raise HTTPException(status_code=500, detail="Failed to update RSU vesting period.")
+    return RsuVestingPeriodResponse(
+        id=update_row["id"],
+        rsu_grant_id=update_row["rsu_grant_id"],
+        vest_date=update_row["vest_date"],
+        granted_quantity=update_row["granted_quantity"],
+        price_at_vesting=update_row["price_at_vesting"],
+        status=update_row["status"],
+        shares_withheld=update_row["shares_withheld"],
+        shares_left=update_row["shares_left"],
+        shares_available=update_row["shares_available"],
+        value_at_vesting=update_row["value_at_vesting"],
+        taxes_to_pay=update_row["taxes_to_pay"],
+        taxes_paid=update_row["taxes_paid"],
+        taxes_paid_with_shares=update_row["taxes_paid_with_shares"],
+        refunded_from_taxes=update_row["refunded_from_taxes"],
+        investment_entry_id=update_row["investment_entry_id"],
+        created_at=update_row["created_at"],
+    )
+
+
+@app.post(
+    "/rsu-grants/{grant_id}/vesting-periods/{period_id}/sell",
+    response_model=RsuSellResponse,
+)
+def sell_rsu_shares(
+    grant_id: int,
+    period_id: int,
+    payload: RsuSellPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> RsuSellResponse:
+    user_id = get_user_id(x_user_id)
+    try:
+        payload = RsuSellPayload.validate_payload(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with engine.begin() as conn:
+        grant_row = conn.execute(
+            select(
+                rsu_grants.c.id,
+                rsu_grants.c.stock_ticker,
+                rsu_grants.c.stock_currency,
+            ).where(rsu_grants.c.id == grant_id, rsu_grants.c.user_id == user_id)
+        ).mappings().first()
+        if not grant_row:
+            raise HTTPException(status_code=404, detail="RSU grant not found.")
+
+        vesting_row = conn.execute(
+            select(
+                rsu_vesting_periods.c.id,
+                rsu_vesting_periods.c.status,
+                rsu_vesting_periods.c.price_at_vesting,
+                rsu_vesting_periods.c.shares_left,
+                rsu_vesting_periods.c.shares_available,
+            ).where(
+                rsu_vesting_periods.c.id == period_id,
+                rsu_vesting_periods.c.rsu_grant_id == grant_id,
+            )
+        ).mappings().first()
+        if not vesting_row:
+            raise HTTPException(status_code=404, detail="RSU vesting period not found.")
+        if vesting_row["status"] != "vested":
+            raise HTTPException(status_code=400, detail="RSU vesting period must be vested.")
+        if not vesting_row["price_at_vesting"]:
+            raise HTTPException(status_code=400, detail="RSU price at vesting unavailable.")
+
+        shares_available = vesting_row["shares_available"]
+        if shares_available is None:
+            shares_available = vesting_row["shares_left"]
+        if shares_available is None:
+            raise HTTPException(status_code=400, detail="RSU shares unavailable.")
+        if payload.quantity > shares_available:
+            raise HTTPException(status_code=400, detail="Sell quantity exceeds available shares.")
+
+        account_id = payload.account_id
+        if account_id is None:
+            investment_accounts = conn.execute(
+                select(accounts.c.id)
+                .where(accounts.c.user_id == user_id, accounts.c.type == "investment")
+                .order_by(accounts.c.id.asc())
+            ).scalars().all()
+            if len(investment_accounts) == 1:
+                account_id = investment_accounts[0]
+            elif not investment_accounts:
+                raise HTTPException(status_code=400, detail="No investment account available for RSU sell.")
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Account required when multiple investment accounts exist.",
+                )
+        account_exists = conn.execute(
+            select(accounts.c.id).where(accounts.c.id == account_id, accounts.c.user_id == user_id)
+        ).first()
+        if not account_exists:
+            raise HTTPException(status_code=404, detail="Account not found.")
+
+        quantity = payload.quantity.quantize(ESPP_SHARES_QUANT)
+        sell_price = payload.price.quantize(ESPP_PRICE_QUANT)
+        price_at_vesting = coerce_decimal(vesting_row["price_at_vesting"]).quantize(ESPP_PRICE_QUANT)
+        total_proceeds = (quantity * sell_price).quantize(ESPP_MONEY_QUANT)
+        cost_of_sold_shares = (quantity * price_at_vesting).quantize(ESPP_MONEY_QUANT)
+        realized_profit_loss = (total_proceeds - cost_of_sold_shares).quantize(ESPP_MONEY_QUANT)
+
+        remaining_shares = (shares_available - quantity).quantize(ESPP_SHARES_QUANT)
+        if remaining_shares < 0:
+            raise HTTPException(status_code=400, detail="Sell quantity exceeds available shares.")
+
+        category_name = "RSU"
+        category_exists = conn.execute(
+            select(categories.c.id).where(
+                categories.c.user_id == user_id, categories.c.name == category_name
+            )
+        ).mappings().first()
+        if not category_exists:
+            conn.execute(
+                insert(categories).values(
+                    user_id=user_id,
+                    name=category_name,
+                    group="investments",
+                )
+            )
+
+        investment_name = f"RSU ({grant_row['stock_ticker']})"
+        investment_row = conn.execute(
+            select(investments.c.id).where(
+                investments.c.user_id == user_id, investments.c.name == investment_name
+            )
+        ).mappings().first()
+        if not investment_row:
+            investment_row = conn.execute(
+                insert(investments)
+                .values(
+                    user_id=user_id,
+                    name=investment_name,
+                    symbol=grant_row["stock_ticker"],
+                    asset_type="stock",
+                )
+                .returning(investments.c.id)
+            ).mappings().first()
+        if not investment_row:
+            raise HTTPException(status_code=500, detail="Failed to create investment.")
+        investment_id = investment_row["id"]
+
+        txn_row = conn.execute(
+            insert(transactions)
+            .values(
+                user_id=user_id,
+                account_id=account_id,
+                amount=total_proceeds,
+                currency=grant_row["stock_currency"],
+                type="income",
+                category=category_name,
+                date=payload.sell_date,
+                notes=None,
+            )
+            .returning(transactions.c.id)
+        ).mappings().first()
+        if not txn_row:
+            raise HTTPException(status_code=500, detail="Failed to create transaction.")
+        transaction_id = txn_row["id"]
+
+        entry_row = conn.execute(
+            insert(investment_entries)
+            .values(
+                user_id=user_id,
+                investment_id=investment_id,
+                transaction_id=transaction_id,
+                quantity=quantity,
+                price=sell_price,
+                price_per_share=sell_price,
+                total_amount=total_proceeds,
+                currency=grant_row["stock_currency"],
+                cost_of_sold_shares=cost_of_sold_shares,
+                realized_profit_loss=realized_profit_loss,
+                source="rsu",
+                type="sell",
+                date=payload.sell_date,
+            )
+            .returning(investment_entries.c.id)
+        ).mappings().first()
+        if not entry_row:
+            raise HTTPException(status_code=500, detail="Failed to create investment entry.")
+
+        conn.execute(
+            update(rsu_vesting_periods)
+            .where(
+                rsu_vesting_periods.c.id == period_id,
+                rsu_vesting_periods.c.rsu_grant_id == grant_id,
+            )
+            .values(shares_available=max(remaining_shares, Decimal("0")))
+        )
+
+    return RsuSellResponse(
+        period_id=period_id,
+        transaction_id=transaction_id,
+        investment_entry_id=entry_row["id"],
+        shares_remaining=remaining_shares,
+        proceeds=total_proceeds,
+        cost_of_sold_shares=cost_of_sold_shares,
+        realized_profit_loss=realized_profit_loss,
+    )
 
 
 @app.get("/recurring-schedules", response_model=list[RecurringScheduleResponse])

@@ -12,6 +12,7 @@ const navItems = [
   { href: "/recurring", label: "Recurring schedules", icon: CalendarIcon },
   { href: "/investments", label: "Investments", icon: InvestmentsIcon },
   { href: "/espp", label: "ESPP", icon: EsppIcon },
+  { href: "/rsu", label: "RSU", icon: RsuIcon },
   { href: "/budget", label: "Settings", icon: SettingsIcon }
 ];
 
@@ -177,6 +178,25 @@ function EsppIcon({ className }) {
       <path d="M4 12h16" />
       <path d="M4 17h10" />
       <path d="M16 17l3 3 3-3" />
+    </svg>
+  );
+}
+
+function RsuIcon({ className }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M4 8h16" />
+      <path d="M4 16h16" />
+      <path d="M8 4v4" />
+      <path d="M16 16v4" />
     </svg>
   );
 }
