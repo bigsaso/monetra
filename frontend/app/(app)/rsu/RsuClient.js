@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import {
@@ -28,6 +28,11 @@ const buildGrantForm = (grantDate) => ({
   stock_ticker: "",
   stock_currency: "USD",
   grant_date: grantDate
+});
+
+const buildVestingPeriodForm = (vestDate) => ({
+  vest_date: vestDate,
+  granted_quantity: ""
 });
 
 const buildVestForm = (vestDate) => ({
@@ -84,6 +89,12 @@ export default function RsuClient() {
   const [grantForm, setGrantForm] = useState(buildGrantForm(today));
   const [grantSaving, setGrantSaving] = useState(false);
   const [grantError, setGrantError] = useState("");
+  const [addPeriodModalOpen, setAddPeriodModalOpen] = useState(false);
+  const [addPeriodForm, setAddPeriodForm] = useState(
+    buildVestingPeriodForm(today)
+  );
+  const [addPeriodSaving, setAddPeriodSaving] = useState(false);
+  const [addPeriodError, setAddPeriodError] = useState("");
   const [vestModalOpen, setVestModalOpen] = useState(false);
   const [vestTarget, setVestTarget] = useState(null);
   const [vestForm, setVestForm] = useState(buildVestForm(""));
@@ -112,6 +123,34 @@ export default function RsuClient() {
   const investmentAccounts = useMemo(
     () => accounts.filter((account) => account.type === "investment"),
     [accounts]
+  );
+
+  const loadVestingPeriods = useCallback(async (grantId) => {
+    if (!grantId) {
+      setVestingPeriods([]);
+      return;
+    }
+    setVestingLoading(true);
+    setVestingError("");
+    try {
+      const response = await fetch(
+        `/api/rsu-grants/${grantId}/vesting-periods`
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to load vesting periods.");
+      }
+      setVestingPeriods(data || []);
+    } catch (err) {
+      setVestingError(err.message);
+    } finally {
+      setVestingLoading(false);
+    }
+  }, []);
+
+  const hasVestedPeriods = useMemo(
+    () => vestingPeriods.some((period) => period.status === "vested"),
+    [vestingPeriods]
   );
 
   useEffect(() => {
@@ -163,31 +202,8 @@ export default function RsuClient() {
   }, [grants, selectedGrantId]);
 
   useEffect(() => {
-    const loadVestingPeriods = async () => {
-      if (!selectedGrantId) {
-        setVestingPeriods([]);
-        return;
-      }
-      setVestingLoading(true);
-      setVestingError("");
-      try {
-        const response = await fetch(
-          `/api/rsu-grants/${selectedGrantId}/vesting-periods`
-        );
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data?.detail || "Failed to load vesting periods.");
-        }
-        setVestingPeriods(data || []);
-      } catch (err) {
-        setVestingError(err.message);
-      } finally {
-        setVestingLoading(false);
-      }
-    };
-
-    loadVestingPeriods();
-  }, [selectedGrantId]);
+    loadVestingPeriods(selectedGrantId);
+  }, [loadVestingPeriods, selectedGrantId]);
 
   useEffect(() => {
     if (!vestModalOpen) {
@@ -228,6 +244,24 @@ export default function RsuClient() {
     setGrantError("");
   };
 
+  const openAddPeriodModal = () => {
+    if (!selectedGrantId) {
+      return;
+    }
+    setAddPeriodForm(buildVestingPeriodForm(today));
+    setAddPeriodError("");
+    setAddPeriodModalOpen(true);
+  };
+
+  const closeAddPeriodModal = () => {
+    if (addPeriodSaving) {
+      return;
+    }
+    setAddPeriodModalOpen(false);
+    setAddPeriodForm(buildVestingPeriodForm(today));
+    setAddPeriodError("");
+  };
+
   const openVestModal = (period) => {
     setVestTarget(period);
     setVestForm(buildVestForm(period.vest_date || today));
@@ -265,6 +299,11 @@ export default function RsuClient() {
   const handleGrantChange = (event) => {
     const { name, value } = event.target;
     setGrantForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleAddPeriodChange = (event) => {
+    const { name, value } = event.target;
+    setAddPeriodForm((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleVestChange = (event) => {
@@ -321,6 +360,48 @@ export default function RsuClient() {
     }
   };
 
+  const handleAddPeriodSubmit = async (event) => {
+    event.preventDefault();
+    if (!selectedGrantId) {
+      return;
+    }
+    if (!addPeriodForm.vest_date) {
+      setAddPeriodError("Select a vest date.");
+      return;
+    }
+    const quantityValue = Number(addPeriodForm.granted_quantity);
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+      setAddPeriodError("Enter a valid granted quantity.");
+      return;
+    }
+
+    setAddPeriodSaving(true);
+    setAddPeriodError("");
+    try {
+      const response = await fetch(
+        `/api/rsu-grants/${selectedGrantId}/vesting-periods`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            vest_date: addPeriodForm.vest_date,
+            granted_quantity: quantityValue
+          })
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || "Failed to create vesting period.");
+      }
+      closeAddPeriodModal();
+      await loadVestingPeriods(selectedGrantId);
+    } catch (err) {
+      setAddPeriodError(err.message);
+    } finally {
+      setAddPeriodSaving(false);
+    }
+  };
+
   const handleVestSubmit = async (event) => {
     event.preventDefault();
     if (!vestTarget || !selectedGrantId) {
@@ -361,10 +442,8 @@ export default function RsuClient() {
       if (!response.ok) {
         throw new Error(data?.detail || "Failed to record vesting.");
       }
-      setVestingPeriods((prev) =>
-        prev.map((period) => (period.id === data.id ? data : period))
-      );
       closeVestModal();
+      await loadVestingPeriods(selectedGrantId);
     } catch (err) {
       setVestError(err.message);
     } finally {
@@ -496,11 +575,21 @@ export default function RsuClient() {
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Vesting periods</CardTitle>
-            <CardDescription>
-              Mark vesting batches and record any share sales.
-            </CardDescription>
+          <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle>Vesting periods</CardTitle>
+              <CardDescription>
+                Mark vesting batches and record any share sales.
+              </CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={openAddPeriodModal}
+              disabled={!selectedGrantId}
+            >
+              Add vesting period
+            </Button>
           </CardHeader>
           <CardContent className="overflow-x-auto md:overflow-visible">
             {accountsError ? (
@@ -514,7 +603,7 @@ export default function RsuClient() {
               <p>Select a grant to view vesting periods.</p>
             ) : null}
             {selectedGrantId && !vestingLoading && vestingPeriods.length === 0 ? (
-              <p>No vesting periods yet.</p>
+              <p>No vesting periods for this RSU grant yet.</p>
             ) : null}
             {selectedGrantId && vestingPeriods.length > 0 ? (
               <Table>
@@ -523,7 +612,9 @@ export default function RsuClient() {
                     <TableHead>Vest date</TableHead>
                     <TableHead className="text-right">Granted quantity</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Shares available</TableHead>
+                    {hasVestedPeriods ? (
+                      <TableHead className="text-right">Shares available</TableHead>
+                    ) : null}
                     <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -554,11 +645,13 @@ export default function RsuClient() {
                             {isVested ? "Vested" : "Unvested"}
                           </span>
                         </TableCell>
-                        <TableCell className="text-right">
-                          {sharesAvailable == null
-                            ? "-"
-                            : quantityFormatter.format(Number(sharesAvailable))}
-                        </TableCell>
+                        {hasVestedPeriods ? (
+                          <TableCell className="text-right">
+                            {sharesAvailable == null
+                              ? "-"
+                              : quantityFormatter.format(Number(sharesAvailable))}
+                          </TableCell>
+                        ) : null}
                         <TableCell>
                           <div className="flex flex-wrap gap-2">
                             {!isVested ? (
@@ -672,6 +765,70 @@ export default function RsuClient() {
               </DialogClose>
               <Button type="submit" disabled={grantSaving}>
                 {grantSaving ? "Saving..." : "Create grant"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={addPeriodModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeAddPeriodModal();
+          } else {
+            setAddPeriodModalOpen(true);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Add vesting period</DialogTitle>
+            <DialogDescription>
+              Add a vest date and granted quantity for this grant.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleAddPeriodSubmit} className="grid gap-3">
+            <label className="text-sm text-slate-600">
+              Vest date
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                type="date"
+                name="vest_date"
+                value={addPeriodForm.vest_date}
+                onChange={handleAddPeriodChange}
+                required
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Granted quantity
+              <input
+                className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                type="number"
+                step="0.0001"
+                min="0"
+                name="granted_quantity"
+                value={addPeriodForm.granted_quantity}
+                onChange={handleAddPeriodChange}
+                required
+              />
+            </label>
+            {addPeriodError ? (
+              <p className="text-sm text-rose-600">{addPeriodError}</p>
+            ) : null}
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={closeAddPeriodModal}
+                  disabled={addPeriodSaving}
+                >
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button type="submit" disabled={addPeriodSaving}>
+                {addPeriodSaving ? "Saving..." : "Add vesting period"}
               </Button>
             </DialogFooter>
           </form>
