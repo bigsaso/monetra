@@ -19,6 +19,7 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
     and_,
+    case,
     or_,
     create_engine,
     func,
@@ -2209,20 +2210,117 @@ def list_investment_positions(
         .limit(1)
         .scalar_subquery()
     )
+    espp_shares_subquery = (
+        select(func.coalesce(func.sum(espp_closure.c.shares_left), 0))
+        .select_from(
+            espp_periods.join(
+                espp_closure, espp_periods.c.id == espp_closure.c.espp_period_id
+            )
+        )
+        .where(
+            espp_periods.c.user_id == user_id,
+            espp_periods.c.stock_ticker == investments.c.symbol,
+            espp_periods.c.status == "closed",
+            espp_closure.c.shares_left > 0,
+        )
+        .scalar_subquery()
+    )
+    espp_cost_basis_subquery = (
+        select(
+            func.coalesce(
+                func.sum(espp_closure.c.shares_left * espp_closure.c.purchase_price),
+                0,
+            )
+        )
+        .select_from(
+            espp_periods.join(
+                espp_closure, espp_periods.c.id == espp_closure.c.espp_period_id
+            )
+        )
+        .where(
+            espp_periods.c.user_id == user_id,
+            espp_periods.c.stock_ticker == investments.c.symbol,
+            espp_periods.c.status == "closed",
+            espp_closure.c.shares_left > 0,
+            espp_closure.c.purchase_price.is_not(None),
+        )
+        .scalar_subquery()
+    )
+    rsu_shares_subquery = (
+        select(func.coalesce(func.sum(rsu_vesting_periods.c.shares_left), 0))
+        .select_from(
+            rsu_grants.join(
+                rsu_vesting_periods, rsu_grants.c.id == rsu_vesting_periods.c.rsu_grant_id
+            )
+        )
+        .where(
+            rsu_grants.c.user_id == user_id,
+            rsu_grants.c.stock_ticker == investments.c.symbol,
+            rsu_vesting_periods.c.status == "vested",
+            rsu_vesting_periods.c.shares_left > 0,
+        )
+        .scalar_subquery()
+    )
+    rsu_cost_basis_subquery = (
+        select(
+            func.coalesce(
+                func.sum(rsu_vesting_periods.c.shares_left * rsu_vesting_periods.c.price_at_vesting),
+                0,
+            )
+        )
+        .select_from(
+            rsu_grants.join(
+                rsu_vesting_periods, rsu_grants.c.id == rsu_vesting_periods.c.rsu_grant_id
+            )
+        )
+        .where(
+            rsu_grants.c.user_id == user_id,
+            rsu_grants.c.stock_ticker == investments.c.symbol,
+            rsu_vesting_periods.c.status == "vested",
+            rsu_vesting_periods.c.shares_left > 0,
+            rsu_vesting_periods.c.price_at_vesting.is_not(None),
+        )
+        .scalar_subquery()
+    )
+    total_shares_expr = case(
+        (source_subquery == "espp", espp_shares_subquery),
+        (source_subquery == "rsu", rsu_shares_subquery),
+        else_=investments.c.total_shares,
+    )
+    total_cost_basis_expr = case(
+        (source_subquery == "espp", espp_cost_basis_subquery),
+        (source_subquery == "rsu", rsu_cost_basis_subquery),
+        else_=investments.c.total_cost_basis,
+    )
+    average_cost_expr = case(
+        (
+            source_subquery == "espp",
+            func.coalesce(espp_cost_basis_subquery / func.nullif(espp_shares_subquery, 0), 0),
+        ),
+        (
+            source_subquery == "rsu",
+            func.coalesce(rsu_cost_basis_subquery / func.nullif(rsu_shares_subquery, 0), 0),
+        ),
+        else_=investments.c.average_cost_per_share,
+    )
     stmt = (
         select(
             investments.c.id,
             investments.c.name,
             investments.c.symbol,
-            investments.c.total_shares,
-            investments.c.average_cost_per_share,
-            investments.c.total_cost_basis,
+            total_shares_expr.label("total_shares"),
+            average_cost_expr.label("average_cost_per_share"),
+            total_cost_basis_expr.label("total_cost_basis"),
             currency_subquery.label("currency"),
             source_subquery.label("source"),
         )
         .where(
             investments.c.user_id == user_id,
-            investments.c.total_shares > 0,
+            or_(
+                investments.c.total_shares > 0,
+                and_(source_subquery == "espp", espp_shares_subquery > 0),
+                and_(source_subquery == "rsu", rsu_shares_subquery > 0),
+            ),
         )
         .order_by(investments.c.created_at.desc())
     )
