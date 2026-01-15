@@ -797,6 +797,15 @@ class EsppBatchResponse(BaseModel):
     purchase_price: Decimal | None = None
 
 
+class EsppBatchValuationResponse(BaseModel):
+    total_shares_bought: Decimal
+    total_cost_basis: Decimal
+    total_shares_sold: Decimal
+    realized_value: Decimal
+    remaining_shares: Decimal
+    remaining_cost_basis: Decimal
+
+
 class EsppOpenFmvPayload(BaseModel):
     open_fmv: Decimal | None = None
 
@@ -1099,6 +1108,99 @@ def compute_espp_summary(
         refunded_from_taxes=refunded_from_taxes,
         unused_for_shares=unused_for_shares,
         total_refunded=total_refunded,
+    )
+
+
+def compute_espp_batch_valuation(
+    conn, user_id: int, period_id: int
+) -> EsppBatchValuationResponse:
+    batch_row = conn.execute(
+        select(
+            investment_entries.c.quantity,
+            investment_entries.c.price,
+            investment_entries.c.price_per_share,
+            espp_closure.c.purchase_price,
+        )
+        .select_from(
+            investment_entries.outerjoin(
+                espp_closure,
+                investment_entries.c.espp_period_id == espp_closure.c.espp_period_id,
+            )
+        )
+        .where(
+            investment_entries.c.user_id == user_id,
+            investment_entries.c.source == "espp",
+            investment_entries.c.type == "buy",
+            investment_entries.c.espp_period_id == period_id,
+        )
+        .order_by(investment_entries.c.id.desc())
+        .limit(1)
+    ).mappings().first()
+    if not batch_row:
+        raise HTTPException(status_code=404, detail="ESPP batch not found.")
+
+    total_shares_bought = coerce_decimal(batch_row["quantity"] or 0).quantize(
+        ESPP_SHARES_QUANT
+    )
+    purchase_price = batch_row["purchase_price"]
+    if purchase_price is None:
+        purchase_price = batch_row["price_per_share"] or batch_row["price"]
+
+    total_cost_basis = Decimal("0")
+    if purchase_price is not None:
+        total_cost_basis = (total_shares_bought * purchase_price).quantize(
+            ESPP_MONEY_QUANT
+        )
+
+    sell_row = conn.execute(
+        select(
+            func.coalesce(func.sum(investment_entries.c.quantity), 0).label(
+                "total_shares_sold"
+            ),
+            func.coalesce(
+                func.sum(
+                    investment_entries.c.quantity
+                    * func.coalesce(
+                        investment_entries.c.price_per_share, investment_entries.c.price
+                    )
+                ),
+                0,
+            ).label("realized_value"),
+            func.coalesce(func.sum(investment_entries.c.cost_of_sold_shares), 0).label(
+                "sold_cost_basis"
+            ),
+        ).where(
+            investment_entries.c.user_id == user_id,
+            investment_entries.c.source == "espp",
+            investment_entries.c.type == "sell",
+            investment_entries.c.espp_period_id == period_id,
+        )
+    ).mappings().first()
+
+    total_shares_sold = coerce_decimal(sell_row["total_shares_sold"]).quantize(
+        ESPP_SHARES_QUANT
+    )
+    realized_value = coerce_decimal(sell_row["realized_value"]).quantize(
+        ESPP_MONEY_QUANT
+    )
+    sold_cost_basis = coerce_decimal(sell_row["sold_cost_basis"]).quantize(
+        ESPP_MONEY_QUANT
+    )
+
+    remaining_shares = (total_shares_bought - total_shares_sold).quantize(
+        ESPP_SHARES_QUANT
+    )
+    remaining_cost_basis = (total_cost_basis - sold_cost_basis).quantize(
+        ESPP_MONEY_QUANT
+    )
+
+    return EsppBatchValuationResponse(
+        total_shares_bought=total_shares_bought,
+        total_cost_basis=total_cost_basis,
+        total_shares_sold=total_shares_sold,
+        realized_value=realized_value,
+        remaining_shares=remaining_shares,
+        remaining_cost_basis=remaining_cost_basis,
     )
 
 
@@ -2248,6 +2350,15 @@ def list_espp_batches(
         for row in rows
         if row["purchase_date"] is not None
     ]
+
+
+@app.get("/espp-batches/{period_id}/valuation", response_model=EsppBatchValuationResponse)
+def get_espp_batch_valuation(
+    period_id: int, x_user_id: str | None = Header(None, alias="x-user-id")
+) -> EsppBatchValuationResponse:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        return compute_espp_batch_valuation(conn, user_id, period_id)
 
 
 @app.get("/espp-periods", response_model=list[EsppPeriodResponse])
