@@ -231,47 +231,59 @@ export default function RsuClient() {
     [vestingPeriods]
   );
 
+  const hasUnvestedPeriods = useMemo(
+    () => vestingPeriods.some((period) => period.status === "unvested"),
+    [vestingPeriods]
+  );
+
   const rsuLiveMetrics = useMemo(() => {
-    if (!rsuValuation) {
-      return null;
-    }
-    const remainingShares =
-      rsuValuation?.remaining_shares != null
-        ? Number(rsuValuation.remaining_shares)
-        : null;
-    const normalizedRemainingShares = Number.isFinite(remainingShares)
-      ? remainingShares
-      : null;
     const realizedValue =
       rsuValuation?.realized_value != null
         ? Number(rsuValuation.realized_value)
         : null;
     const livePrice = Number(rsuMarketQuote?.price || 0);
-    if (!Number.isFinite(livePrice) || livePrice <= 0) {
-      return {
-        remainingShares: normalizedRemainingShares,
-        realizedValue,
-        livePrice: null,
-        unrealizedValue: null,
-        totalValue: null
-      };
-    }
+    const normalizedLivePrice =
+      Number.isFinite(livePrice) && livePrice > 0 ? livePrice : null;
+    const vestedShares = vestingPeriods.reduce((total, period) => {
+      if (period.status !== "vested") {
+        return total;
+      }
+      const sharesAvailable = Number(period.shares_available || 0);
+      return Number.isFinite(sharesAvailable) ? total + sharesAvailable : total;
+    }, 0);
+    const unvestedShares = vestingPeriods.reduce((total, period) => {
+      if (period.status !== "unvested") {
+        return total;
+      }
+      const grantedQuantity = Number(period.granted_quantity || 0);
+      return Number.isFinite(grantedQuantity) ? total + grantedQuantity : total;
+    }, 0);
     const unrealizedValue =
-      normalizedRemainingShares != null
-        ? normalizedRemainingShares * livePrice
+      normalizedLivePrice != null && hasVestedPeriods
+        ? vestedShares * normalizedLivePrice
+        : null;
+    const potentialValue =
+      normalizedLivePrice != null && hasUnvestedPeriods
+        ? unvestedShares * normalizedLivePrice
         : null;
     const totalValue =
       realizedValue != null && unrealizedValue != null
         ? realizedValue + unrealizedValue
         : null;
     return {
-      remainingShares: normalizedRemainingShares,
       realizedValue,
-      livePrice,
+      livePrice: normalizedLivePrice,
       unrealizedValue,
+      potentialValue,
       totalValue
     };
-  }, [rsuMarketQuote?.price, rsuValuation]);
+  }, [
+    hasUnvestedPeriods,
+    hasVestedPeriods,
+    rsuMarketQuote?.price,
+    rsuValuation,
+    vestingPeriods
+  ]);
 
   useEffect(() => {
     const loadAccounts = async () => {
@@ -326,13 +338,13 @@ export default function RsuClient() {
   }, [loadVestingPeriods, selectedGrantId]);
 
   useEffect(() => {
-    if (!selectedGrantId || !hasVestedPeriods || vestingLoading) {
+    if (!selectedGrantId || vestingLoading) {
       setRsuValuation(null);
       setRsuValuationError("");
       return;
     }
     loadRsuValuation(selectedGrantId);
-  }, [hasVestedPeriods, loadRsuValuation, selectedGrantId, vestingLoading]);
+  }, [loadRsuValuation, selectedGrantId, vestingLoading]);
 
   useEffect(() => {
     if (!vestModalOpen) {
@@ -359,7 +371,7 @@ export default function RsuClient() {
   }, [sellModalOpen, sellForm.account_id, investmentAccounts]);
 
   useEffect(() => {
-    if (!selectedGrantId || !hasVestedPeriods || vestingLoading) {
+    if (!selectedGrantId || vestingLoading) {
       setRsuMarketQuote(null);
       setRsuMarketError("");
       setRsuMarketLoading(false);
@@ -389,7 +401,12 @@ export default function RsuClient() {
         }
       } catch (err) {
         if (!cancelled) {
-          setRsuMarketError(err.message || "Failed to load live market data.");
+          const baseMessage =
+            err.message || "Failed to load live market data.";
+          const nextMessage = baseMessage.includes("Quote unavailable.")
+            ? `${baseMessage} This could be caused by rate limiting. Retrying in 1 minute.`
+            : baseMessage;
+          setRsuMarketError(nextMessage);
           setRsuMarketQuote(null);
         }
       } finally {
@@ -404,12 +421,7 @@ export default function RsuClient() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [
-    hasVestedPeriods,
-    selectedGrant?.stock_ticker,
-    selectedGrantId,
-    vestingLoading
-  ]);
+  }, [selectedGrant?.stock_ticker, selectedGrantId, vestingLoading]);
 
   const openGrantModal = () => {
     setGrantForm(buildGrantForm(today));
@@ -878,8 +890,6 @@ export default function RsuClient() {
               <p className="text-sm text-slate-500">
                 Select a grant to view the valuation.
               </p>
-            ) : !hasVestedPeriods ? (
-              <p className="text-sm text-slate-500">No vested RSU batches yet.</p>
             ) : (
               <>
                 {rsuValuationLoading ? (
@@ -898,62 +908,93 @@ export default function RsuClient() {
                 {rsuMarketError ? (
                   <p className="text-sm text-rose-600">{rsuMarketError}</p>
                 ) : null}
-                {rsuValuation ? (
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
-                      <div className="text-xs text-slate-500">
-                        Current price ({rsuStockCurrency || "currency"})
-                      </div>
-                      <div className="text-slate-900">
-                        {rsuLiveMetrics?.livePrice != null
-                          ? formatPrice(
-                              rsuLiveMetrics.livePrice,
-                              rsuStockCurrency
-                            )
-                          : "-"}
-                      </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                    <div className="text-xs text-slate-500">
+                      Current price ({rsuStockCurrency || "currency"})
                     </div>
-                    <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
-                      <div className="text-xs text-slate-500">
-                        Unrealized value ({rsuStockCurrency || "currency"})
-                      </div>
-                      <div className="text-slate-900">
-                        {rsuLiveMetrics?.unrealizedValue != null
-                          ? formatMoney(
-                              rsuLiveMetrics.unrealizedValue,
-                              rsuStockCurrency
-                            )
-                          : "-"}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
-                      <div className="text-xs text-slate-500">
-                        Realized value ({rsuStockCurrency || "currency"})
-                      </div>
-                      <div className="text-slate-900">
-                        {rsuLiveMetrics?.realizedValue != null
-                          ? formatMoney(
-                              rsuLiveMetrics.realizedValue,
-                              rsuStockCurrency
-                            )
-                          : "-"}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
-                      <div className="text-xs text-slate-500">
-                        Total RSU value ({rsuStockCurrency || "currency"})
-                      </div>
-                      <div className="text-slate-900">
-                        {rsuLiveMetrics?.totalValue != null
-                          ? formatMoney(
-                              rsuLiveMetrics.totalValue,
-                              rsuStockCurrency
-                            )
-                          : "-"}
-                      </div>
+                    <div className="text-slate-900">
+                      {rsuLiveMetrics?.livePrice != null
+                        ? formatPrice(
+                            rsuLiveMetrics.livePrice,
+                            rsuStockCurrency
+                          )
+                        : "-"}
                     </div>
                   </div>
-                ) : null}
+                  {hasUnvestedPeriods ? (
+                    <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                      <div className="text-xs text-slate-500">
+                        Unvested / potential ({rsuStockCurrency || "currency"})
+                      </div>
+                      <div className="text-slate-900">
+                        {rsuLiveMetrics?.potentialValue != null
+                          ? formatMoney(
+                              rsuLiveMetrics.potentialValue,
+                              rsuStockCurrency
+                            )
+                          : "-"}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                    <div className="text-xs text-slate-500">
+                      Unrealized value ({rsuStockCurrency || "currency"})
+                    </div>
+                    <div className="text-slate-900">
+                      {!hasVestedPeriods ? (
+                        <span className="text-slate-400">
+                          No vested batches yet.
+                        </span>
+                      ) : rsuLiveMetrics?.unrealizedValue != null ? (
+                        formatMoney(
+                          rsuLiveMetrics.unrealizedValue,
+                          rsuStockCurrency
+                        )
+                      ) : (
+                        "-"
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                    <div className="text-xs text-slate-500">
+                      Realized value ({rsuStockCurrency || "currency"})
+                    </div>
+                    <div className="text-slate-900">
+                      {!hasVestedPeriods ? (
+                        <span className="text-slate-400">
+                          No vested batches yet.
+                        </span>
+                      ) : rsuLiveMetrics?.realizedValue != null ? (
+                        formatMoney(
+                          rsuLiveMetrics.realizedValue,
+                          rsuStockCurrency
+                        )
+                      ) : (
+                        "-"
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm">
+                    <div className="text-xs text-slate-500">
+                      Total value ({rsuStockCurrency || "currency"})
+                    </div>
+                    <div className="text-slate-900">
+                      {!hasVestedPeriods ? (
+                        <span className="text-slate-400">
+                          No vested batches yet.
+                        </span>
+                      ) : rsuLiveMetrics?.totalValue != null ? (
+                        formatMoney(
+                          rsuLiveMetrics.totalValue,
+                          rsuStockCurrency
+                        )
+                      ) : (
+                        "-"
+                      )}
+                    </div>
+                  </div>
+                </div>
                 {rsuMarketLoading ? (
                   <p className="mt-3 text-xs text-slate-400">
                     Fetching live market data...

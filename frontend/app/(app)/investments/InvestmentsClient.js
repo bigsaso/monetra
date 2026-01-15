@@ -1055,7 +1055,12 @@ export default function InvestmentsClient({ view = "investments" }) {
         }
       } catch (err) {
         if (!cancelled) {
-          setEsppMarketError(err.message || "Failed to load live market data.");
+          const baseMessage =
+            err.message || "Failed to load live market data.";
+          const nextMessage = baseMessage.includes("Quote unavailable.")
+            ? `${baseMessage} This could be caused by rate limiting. Retrying in 1 minute.`
+            : baseMessage;
+          setEsppMarketError(nextMessage);
           setEsppMarketQuote(null);
           setEsppFxRate(null);
         }
