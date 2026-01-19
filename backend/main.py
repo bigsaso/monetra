@@ -2211,7 +2211,7 @@ def list_investment_positions(
         .scalar_subquery()
     )
     espp_shares_subquery = (
-        select(func.coalesce(func.sum(espp_closure.c.shares_left), 0))
+        select(func.coalesce(func.sum(espp_closure.c.shares_available), 0))
         .select_from(
             espp_periods.join(
                 espp_closure, espp_periods.c.id == espp_closure.c.espp_period_id
@@ -2247,7 +2247,7 @@ def list_investment_positions(
         .scalar_subquery()
     )
     rsu_shares_subquery = (
-        select(func.coalesce(func.sum(rsu_vesting_periods.c.shares_left), 0))
+        select(func.coalesce(func.sum(rsu_vesting_periods.c.shares_available), 0))
         .select_from(
             rsu_grants.join(
                 rsu_vesting_periods, rsu_grants.c.id == rsu_vesting_periods.c.rsu_grant_id
