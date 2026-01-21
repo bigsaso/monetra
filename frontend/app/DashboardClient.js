@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import EquitySummaryCard from "./components/EquitySummaryCard";
 import ExpenseLineChart from "./components/ExpenseLineChart";
 import MonthlyExpenseSummaryCard from "./components/MonthlyExpenseSummaryCard";
 import MonthlyCashflowChart from "./components/MonthlyCashflowChart";
 import SpendingByCategoryLineChartCard from "./components/SpendingByCategoryLineChartCard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
+import { useEquitySummary } from "../lib/useEquitySummary";
 import { useMonthlyExpenseGroups } from "../lib/useMonthlyExpenseGroups";
 import { useMonthlyTrends } from "../lib/useMonthlyTrends";
 import { useNetFlowSummary } from "../lib/useNetFlowSummary";
@@ -102,6 +104,11 @@ export default function DashboardClient() {
     data: netFlowSummary,
     loading: netFlowLoading
   } = useNetFlowSummary({ month: expenseSummaryMonth });
+  const {
+    data: equitySummary,
+    loading: equitySummaryLoading,
+    error: equitySummaryError
+  } = useEquitySummary();
 
   const loadData = async () => {
     try {
@@ -249,6 +256,14 @@ export default function DashboardClient() {
           categoryBreakdown={expenseSummaryCategoryBreakdown}
           categoryBreakdownLoading={expenseSummaryBreakdownLoading}
           categoryBreakdownError={expenseSummaryBreakdownError}
+        />
+
+        <EquitySummaryCard
+          className="md:col-span-12"
+          summary={equitySummary}
+          loading={equitySummaryLoading}
+          error={equitySummaryError}
+          homeCurrency={homeCurrency}
         />
 
         <SpendingByCategoryLineChartCard

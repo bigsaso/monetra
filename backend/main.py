@@ -545,6 +545,46 @@ class NetFlowSummaryResponse(BaseModel):
     source_currencies_previous_month: list[str] | None = None
 
 
+class EquitySummaryUnvestedItem(BaseModel):
+    shares: Decimal
+    value: Decimal
+
+
+class EquitySummaryUnrealizedItem(BaseModel):
+    shares: Decimal
+    value: Decimal
+    cost_basis: Decimal
+    pnl: Decimal
+    pnl_pct: Decimal
+
+
+class EquitySummaryRealizedItem(BaseModel):
+    shares: Decimal
+    value: Decimal
+    pnl: Decimal
+    pnl_pct: Decimal
+
+
+class EquitySummaryUnvested(BaseModel):
+    rsu: EquitySummaryUnvestedItem
+
+
+class EquitySummaryVestedUnrealized(BaseModel):
+    espp: EquitySummaryUnrealizedItem
+    rsu: EquitySummaryUnrealizedItem
+
+
+class EquitySummaryVestedRealized(BaseModel):
+    espp: EquitySummaryRealizedItem
+    rsu: EquitySummaryRealizedItem
+
+
+class EquitySummaryResponse(BaseModel):
+    unvested: EquitySummaryUnvested
+    vested_unrealized: EquitySummaryVestedUnrealized
+    vested_realized: EquitySummaryVestedRealized
+
+
 class CategoryBreakdownResponse(BaseModel):
     category: str
     total_spent: Decimal
@@ -1689,6 +1729,95 @@ def convert_amount_safe(
         )
     except ValueError:
         return coerce_decimal(amount)
+
+
+def quantize_money(value: Decimal) -> Decimal:
+    return value.quantize(ESPP_MONEY_QUANT)
+
+
+def quantize_shares(value: Decimal) -> Decimal:
+    return value.quantize(ESPP_SHARES_QUANT)
+
+
+def quantize_ratio(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.0001"))
+
+
+def normalize_ticker(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip().upper()
+    return normalized if normalized else None
+
+
+def fetch_latest_stock_price(conn, user_id: int, ticker: str) -> Decimal | None:
+    latest_entry = conn.execute(
+        select(investment_entries.c.price_per_share, investment_entries.c.price)
+        .select_from(
+            investment_entries.join(
+                investments, investment_entries.c.investment_id == investments.c.id
+            )
+        )
+        .where(
+            investment_entries.c.user_id == user_id,
+            investments.c.symbol == ticker,
+        )
+        .order_by(investment_entries.c.date.desc(), investment_entries.c.id.desc())
+        .limit(1)
+    ).mappings().first()
+    if latest_entry:
+        price = latest_entry["price_per_share"] or latest_entry["price"]
+        if price is not None and price > 0:
+            return coerce_decimal(price)
+
+    latest_vesting_price = conn.execute(
+        select(rsu_vesting_periods.c.price_at_vesting)
+        .select_from(
+            rsu_grants.join(
+                rsu_vesting_periods,
+                rsu_grants.c.id == rsu_vesting_periods.c.rsu_grant_id,
+            )
+        )
+        .where(
+            rsu_grants.c.user_id == user_id,
+            rsu_grants.c.stock_ticker == ticker,
+            rsu_vesting_periods.c.price_at_vesting.is_not(None),
+        )
+        .order_by(rsu_vesting_periods.c.vest_date.desc(), rsu_vesting_periods.c.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if latest_vesting_price is not None and latest_vesting_price > 0:
+        return coerce_decimal(latest_vesting_price)
+
+    latest_espp_price = conn.execute(
+        select(
+            espp_closure.c.close_fmv,
+            espp_closure.c.open_fmv,
+            espp_closure.c.purchase_price,
+        )
+        .select_from(
+            espp_periods.join(
+                espp_closure, espp_periods.c.id == espp_closure.c.espp_period_id
+            )
+        )
+        .where(
+            espp_periods.c.user_id == user_id,
+            espp_periods.c.stock_ticker == ticker,
+            espp_periods.c.status == "closed",
+        )
+        .order_by(espp_periods.c.start_date.desc(), espp_periods.c.id.desc())
+        .limit(1)
+    ).mappings().first()
+    if latest_espp_price:
+        price = (
+            latest_espp_price["close_fmv"]
+            or latest_espp_price["open_fmv"]
+            or latest_espp_price["purchase_price"]
+        )
+        if price is not None and price > 0:
+            return coerce_decimal(price)
+
+    return None
 
 
 def sum_converted_amounts(
@@ -5458,6 +5587,247 @@ def net_flow_summary(
         )
         if previous_income_currencies or previous_expense_currencies
         else None,
+    )
+
+
+@app.get("/reports/equity-summary", response_model=EquitySummaryResponse)
+def equity_summary(
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> EquitySummaryResponse:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        home_currency = resolve_default_currency(conn, user_id)
+
+        unvested_rows = conn.execute(
+            select(
+                rsu_grants.c.stock_ticker,
+                rsu_grants.c.stock_currency,
+                func.coalesce(func.sum(rsu_vesting_periods.c.granted_quantity), 0).label(
+                    "shares"
+                ),
+            )
+            .select_from(
+                rsu_grants.join(
+                    rsu_vesting_periods,
+                    rsu_grants.c.id == rsu_vesting_periods.c.rsu_grant_id,
+                )
+            )
+            .where(
+                rsu_grants.c.user_id == user_id,
+                rsu_vesting_periods.c.status == "unvested",
+            )
+            .group_by(rsu_grants.c.stock_ticker, rsu_grants.c.stock_currency)
+        ).mappings().all()
+
+        vested_rsu_shares_expr = func.coalesce(
+            rsu_vesting_periods.c.shares_available, rsu_vesting_periods.c.shares_left, 0
+        )
+        vested_rsu_rows = conn.execute(
+            select(
+                rsu_grants.c.stock_ticker,
+                rsu_grants.c.stock_currency,
+                func.coalesce(func.sum(vested_rsu_shares_expr), 0).label("shares"),
+                func.coalesce(
+                    func.sum(
+                        vested_rsu_shares_expr
+                        * func.coalesce(rsu_vesting_periods.c.price_at_vesting, 0)
+                    ),
+                    0,
+                ).label("cost_basis"),
+            )
+            .select_from(
+                rsu_grants.join(
+                    rsu_vesting_periods,
+                    rsu_grants.c.id == rsu_vesting_periods.c.rsu_grant_id,
+                )
+            )
+            .where(
+                rsu_grants.c.user_id == user_id,
+                rsu_vesting_periods.c.status == "vested",
+                vested_rsu_shares_expr > 0,
+            )
+            .group_by(rsu_grants.c.stock_ticker, rsu_grants.c.stock_currency)
+        ).mappings().all()
+
+        vested_espp_shares_expr = func.coalesce(
+            espp_closure.c.shares_available, espp_closure.c.shares_left, 0
+        )
+        vested_espp_rows = conn.execute(
+            select(
+                espp_periods.c.stock_ticker,
+                espp_periods.c.stock_currency,
+                func.coalesce(func.sum(vested_espp_shares_expr), 0).label("shares"),
+                func.coalesce(
+                    func.sum(
+                        vested_espp_shares_expr
+                        * func.coalesce(espp_closure.c.purchase_price, 0)
+                    ),
+                    0,
+                ).label("cost_basis"),
+            )
+            .select_from(
+                espp_periods.join(
+                    espp_closure, espp_periods.c.id == espp_closure.c.espp_period_id
+                )
+            )
+            .where(
+                espp_periods.c.user_id == user_id,
+                espp_periods.c.status == "closed",
+                vested_espp_shares_expr > 0,
+            )
+            .group_by(espp_periods.c.stock_ticker, espp_periods.c.stock_currency)
+        ).mappings().all()
+
+        price_expr = func.coalesce(
+            investment_entries.c.price_per_share, investment_entries.c.price
+        )
+        realized_value_expr = func.coalesce(
+            investment_entries.c.total_amount,
+            investment_entries.c.quantity * price_expr,
+        )
+        realized_rows = conn.execute(
+            select(
+                investment_entries.c.source,
+                investment_entries.c.currency,
+                func.coalesce(func.sum(investment_entries.c.quantity), 0).label("shares"),
+                func.coalesce(func.sum(realized_value_expr), 0).label("total_amount"),
+                func.coalesce(
+                    func.sum(func.coalesce(investment_entries.c.cost_of_sold_shares, 0)),
+                    0,
+                ).label("cost_basis"),
+                func.coalesce(
+                    func.sum(func.coalesce(investment_entries.c.realized_profit_loss, 0)),
+                    0,
+                ).label("pnl"),
+            )
+            .where(
+                investment_entries.c.user_id == user_id,
+                investment_entries.c.type == "sell",
+                investment_entries.c.source.in_(("espp", "rsu")),
+            )
+            .group_by(investment_entries.c.source, investment_entries.c.currency)
+        ).mappings().all()
+
+        tickers = set()
+        for row in unvested_rows + vested_rsu_rows + vested_espp_rows:
+            ticker = normalize_ticker(row["stock_ticker"])
+            if ticker:
+                tickers.add(ticker)
+        price_lookup = {
+            ticker: fetch_latest_stock_price(conn, user_id, ticker) for ticker in tickers
+        }
+
+    def convert_to_home(value: Decimal, currency: str | None) -> Decimal:
+        normalized_currency = safe_normalize_currency(currency, home_currency)
+        return convert_amount_safe(value, normalized_currency, home_currency)
+
+    def summarize_unvested(rows: list[dict]) -> EquitySummaryUnvestedItem:
+        total_shares = Decimal("0")
+        total_value = Decimal("0")
+        for row in rows:
+            shares = coerce_decimal(row["shares"])
+            ticker = normalize_ticker(row["stock_ticker"])
+            currency = row["stock_currency"]
+            price = price_lookup.get(ticker)
+            value_stock = Decimal("0")
+            if price is not None and price > 0:
+                value_stock = (shares * price).quantize(ESPP_MONEY_QUANT)
+            total_shares += shares
+            total_value += convert_to_home(value_stock, currency)
+        return EquitySummaryUnvestedItem(
+            shares=quantize_shares(total_shares),
+            value=quantize_money(total_value),
+        )
+
+    def summarize_unrealized(rows: list[dict]) -> EquitySummaryUnrealizedItem:
+        total_shares = Decimal("0")
+        total_value = Decimal("0")
+        total_cost_basis = Decimal("0")
+        for row in rows:
+            shares = coerce_decimal(row["shares"])
+            cost_basis_stock = coerce_decimal(row["cost_basis"])
+            ticker = normalize_ticker(row["stock_ticker"])
+            currency = row["stock_currency"]
+            price = price_lookup.get(ticker)
+            value_stock = Decimal("0")
+            if price is not None and price > 0:
+                value_stock = (shares * price).quantize(ESPP_MONEY_QUANT)
+            total_shares += shares
+            total_value += convert_to_home(value_stock, currency)
+            total_cost_basis += convert_to_home(cost_basis_stock, currency)
+        total_shares = quantize_shares(total_shares)
+        total_value = quantize_money(total_value)
+        total_cost_basis = quantize_money(total_cost_basis)
+        pnl = quantize_money(total_value - total_cost_basis)
+        pnl_pct = Decimal("0")
+        if total_cost_basis != 0:
+            pnl_pct = quantize_ratio(pnl / total_cost_basis)
+        return EquitySummaryUnrealizedItem(
+            shares=total_shares,
+            value=total_value,
+            cost_basis=total_cost_basis,
+            pnl=pnl,
+            pnl_pct=pnl_pct,
+        )
+
+    realized_totals = {
+        "espp": {
+            "shares": Decimal("0"),
+            "value": Decimal("0"),
+            "cost_basis": Decimal("0"),
+            "pnl": Decimal("0"),
+        },
+        "rsu": {
+            "shares": Decimal("0"),
+            "value": Decimal("0"),
+            "cost_basis": Decimal("0"),
+            "pnl": Decimal("0"),
+        },
+    }
+    for row in realized_rows:
+        source = row["source"]
+        if source not in realized_totals:
+            continue
+        currency = row["currency"]
+        realized_totals[source]["shares"] += coerce_decimal(row["shares"])
+        realized_totals[source]["value"] += convert_to_home(
+            coerce_decimal(row["total_amount"]), currency
+        )
+        realized_totals[source]["cost_basis"] += convert_to_home(
+            coerce_decimal(row["cost_basis"]), currency
+        )
+        realized_totals[source]["pnl"] += convert_to_home(
+            coerce_decimal(row["pnl"]), currency
+        )
+
+    def build_realized_item(source: str) -> EquitySummaryRealizedItem:
+        totals = realized_totals[source]
+        shares = quantize_shares(totals["shares"])
+        value = quantize_money(totals["value"])
+        pnl = quantize_money(totals["pnl"])
+        cost_basis = quantize_money(totals["cost_basis"])
+        pnl_pct = Decimal("0")
+        if cost_basis != 0:
+            pnl_pct = quantize_ratio(pnl / cost_basis)
+        return EquitySummaryRealizedItem(
+            shares=shares,
+            value=value,
+            pnl=pnl,
+            pnl_pct=pnl_pct,
+        )
+
+    return EquitySummaryResponse(
+        unvested=EquitySummaryUnvested(
+            rsu=summarize_unvested(unvested_rows),
+        ),
+        vested_unrealized=EquitySummaryVestedUnrealized(
+            espp=summarize_unrealized(vested_espp_rows),
+            rsu=summarize_unrealized(vested_rsu_rows),
+        ),
+        vested_realized=EquitySummaryVestedRealized(
+            espp=build_realized_item("espp"),
+            rsu=build_realized_item("rsu"),
+        ),
     )
 
 
