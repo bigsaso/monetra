@@ -1941,7 +1941,7 @@ export default function InvestmentsClient({ view = "investments" }) {
           : "Maintain the holdings you track and map to investment expenses."}
       </p>
 
-      <div className="mt-8 grid gap-6">
+      <div className="mt-8 grid gap-6 [&>div]:min-w-0">
         {!isEsppView ? (
           <Card>
             <CardHeader>
