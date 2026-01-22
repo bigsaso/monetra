@@ -246,6 +246,14 @@ export default function DashboardClient() {
   return (
     <div className="min-h-screen px-5 py-12 pb-20 sm:px-8 lg:px-16">
       <main className="grid grid-cols-1 gap-6 md:grid-cols-12">
+        <NetWorthCard
+          className="md:col-span-12"
+          summary={netWorthSummary}
+          loading={netWorthLoading}
+          error={netWorthError}
+          homeCurrency={homeCurrency}
+        />
+
         <MonthlyExpenseSummaryCard
           className="md:col-span-12"
           month={expenseSummaryMonth}
@@ -263,27 +271,6 @@ export default function DashboardClient() {
           categoryBreakdown={expenseSummaryCategoryBreakdown}
           categoryBreakdownLoading={expenseSummaryBreakdownLoading}
           categoryBreakdownError={expenseSummaryBreakdownError}
-        />
-
-        <NetWorthCard
-          className="md:col-span-12"
-          summary={netWorthSummary}
-          loading={netWorthLoading}
-          error={netWorthError}
-          homeCurrency={homeCurrency}
-        />
-
-        <EquitySummaryCard
-          className="md:col-span-12"
-          summary={equitySummary}
-          loading={equitySummaryLoading}
-          error={equitySummaryError}
-          homeCurrency={homeCurrency}
-        />
-
-        <SpendingByCategoryLineChartCard
-          className="md:col-span-6"
-          homeCurrency={homeCurrency}
         />
 
         <Card className="md:col-span-6">
@@ -370,7 +357,21 @@ export default function DashboardClient() {
             )}
           </CardContent>
         </Card>
-        <ExpenseLineChart className="md:col-span-6" homeCurrency={homeCurrency} />
+
+        <EquitySummaryCard
+          className="md:col-span-12"
+          summary={equitySummary}
+          loading={equitySummaryLoading}
+          error={equitySummaryError}
+          homeCurrency={homeCurrency}
+        />
+
+        <ExpenseLineChart className="md:col-span-12" homeCurrency={homeCurrency} />
+
+        <SpendingByCategoryLineChartCard
+          className="md:col-span-6"
+          homeCurrency={homeCurrency}
+        />
       </main>
     </div>
   );
