@@ -545,6 +545,28 @@ class NetFlowSummaryResponse(BaseModel):
     source_currencies_previous_month: list[str] | None = None
 
 
+class NetWorthInvestments(BaseModel):
+    espp: Decimal
+    rsu: Decimal
+    other: Decimal
+
+
+class NetWorthAssets(BaseModel):
+    cash: Decimal
+    investments: NetWorthInvestments
+    total_assets: Decimal
+
+
+class NetWorthLiabilities(BaseModel):
+    total_liabilities: Decimal
+
+
+class NetWorthResponse(BaseModel):
+    assets: NetWorthAssets
+    liabilities: NetWorthLiabilities
+    net_worth: Decimal
+
+
 class EquitySummaryUnvestedItem(BaseModel):
     shares: Decimal
     value: Decimal
@@ -5828,6 +5850,246 @@ def equity_summary(
             espp=build_realized_item("espp"),
             rsu=build_realized_item("rsu"),
         ),
+    )
+
+
+@app.get("/reports/net-worth", response_model=NetWorthResponse)
+def net_worth_report(
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> NetWorthResponse:
+    user_id = get_user_id(x_user_id)
+    with engine.begin() as conn:
+        home_currency = resolve_default_currency(conn, user_id)
+
+        balance_expr = case(
+            (transactions.c.type == "income", transactions.c.amount),
+            else_=-transactions.c.amount,
+        )
+        balance_stmt = (
+            select(
+                accounts.c.id,
+                accounts.c.type,
+                transactions.c.currency,
+                func.coalesce(func.sum(balance_expr), 0).label("balance"),
+            )
+            .select_from(
+                accounts.outerjoin(
+                    transactions,
+                    (transactions.c.account_id == accounts.c.id)
+                    & (transactions.c.user_id == accounts.c.user_id),
+                )
+            )
+            .where(accounts.c.user_id == user_id)
+            .group_by(accounts.c.id, accounts.c.type, transactions.c.currency)
+        )
+        balance_rows = conn.execute(balance_stmt).mappings().all()
+
+        vested_rsu_shares_expr = func.coalesce(
+            rsu_vesting_periods.c.shares_available, rsu_vesting_periods.c.shares_left, 0
+        )
+        vested_rsu_rows = conn.execute(
+            select(
+                rsu_grants.c.stock_ticker,
+                rsu_grants.c.stock_currency,
+                func.coalesce(func.sum(vested_rsu_shares_expr), 0).label("shares"),
+            )
+            .select_from(
+                rsu_grants.join(
+                    rsu_vesting_periods,
+                    rsu_grants.c.id == rsu_vesting_periods.c.rsu_grant_id,
+                )
+            )
+            .where(
+                rsu_grants.c.user_id == user_id,
+                rsu_vesting_periods.c.status == "vested",
+                vested_rsu_shares_expr > 0,
+            )
+            .group_by(rsu_grants.c.stock_ticker, rsu_grants.c.stock_currency)
+        ).mappings().all()
+
+        vested_espp_shares_expr = func.coalesce(
+            espp_closure.c.shares_available, espp_closure.c.shares_left, 0
+        )
+        vested_espp_rows = conn.execute(
+            select(
+                espp_periods.c.stock_ticker,
+                espp_periods.c.stock_currency,
+                func.coalesce(func.sum(vested_espp_shares_expr), 0).label("shares"),
+            )
+            .select_from(
+                espp_periods.join(
+                    espp_closure, espp_periods.c.id == espp_closure.c.espp_period_id
+                )
+            )
+            .where(
+                espp_periods.c.user_id == user_id,
+                espp_periods.c.status == "closed",
+                vested_espp_shares_expr > 0,
+            )
+            .group_by(espp_periods.c.stock_ticker, espp_periods.c.stock_currency)
+        ).mappings().all()
+
+        price_expr = func.coalesce(
+            investment_entries.c.price_per_share, investment_entries.c.price
+        )
+        realized_value_expr = func.coalesce(
+            investment_entries.c.total_amount,
+            investment_entries.c.quantity * price_expr,
+        )
+        realized_rows = conn.execute(
+            select(
+                investment_entries.c.source,
+                investment_entries.c.currency,
+                func.coalesce(func.sum(realized_value_expr), 0).label("total_amount"),
+            )
+            .where(
+                investment_entries.c.user_id == user_id,
+                investment_entries.c.type == "sell",
+                investment_entries.c.source.in_(("espp", "rsu")),
+            )
+            .group_by(investment_entries.c.source, investment_entries.c.currency)
+        ).mappings().all()
+
+        currency_subquery = (
+            select(func.coalesce(investment_entries.c.currency, transactions.c.currency))
+            .select_from(
+                investment_entries.join(
+                    transactions,
+                    (investment_entries.c.transaction_id == transactions.c.id)
+                    & (investment_entries.c.user_id == transactions.c.user_id),
+                )
+            )
+            .where(
+                investment_entries.c.user_id == user_id,
+                investment_entries.c.investment_id == investments.c.id,
+            )
+            .order_by(investment_entries.c.date.desc(), investment_entries.c.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        source_subquery = (
+            select(investment_entries.c.source)
+            .where(
+                investment_entries.c.user_id == user_id,
+                investment_entries.c.investment_id == investments.c.id,
+            )
+            .order_by(investment_entries.c.date.desc(), investment_entries.c.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        other_investment_stmt = (
+            select(
+                investments.c.symbol,
+                investments.c.total_shares,
+                investments.c.total_cost_basis,
+                currency_subquery.label("currency"),
+                source_subquery.label("source"),
+            )
+            .where(
+                investments.c.user_id == user_id,
+                or_(investments.c.total_shares > 0, investments.c.total_cost_basis > 0),
+                or_(source_subquery.is_(None), source_subquery.notin_(("espp", "rsu"))),
+            )
+        )
+        other_investment_rows = conn.execute(other_investment_stmt).mappings().all()
+
+        tickers = set()
+        for row in vested_rsu_rows + vested_espp_rows + other_investment_rows:
+            ticker = normalize_ticker(row.get("stock_ticker") or row.get("symbol"))
+            if ticker:
+                tickers.add(ticker)
+        price_lookup = {
+            ticker: fetch_latest_stock_price(conn, user_id, ticker) for ticker in tickers
+        }
+
+    def convert_to_home(value: Decimal, currency: str | None) -> Decimal:
+        normalized_currency = safe_normalize_currency(currency, home_currency)
+        return convert_amount_safe(value, normalized_currency, home_currency)
+
+    cash_total = Decimal("0")
+    liabilities_total = Decimal("0")
+    balances_by_account: dict[int, dict[str, dict[str, Decimal] | str]] = {}
+    for row in balance_rows:
+        account_id = row["id"]
+        account_type = row["type"]
+        currency = row["currency"]
+        balance = coerce_decimal(row["balance"])
+        entry = balances_by_account.setdefault(
+            account_id, {"type": account_type, "balances": {}}
+        )
+        if currency:
+            balances = entry["balances"]
+            balances[currency] = balances.get(currency, Decimal("0")) + balance
+
+    for entry in balances_by_account.values():
+        balances = entry["balances"]
+        balance_total = Decimal("0")
+        for currency, amount in balances.items():
+            balance_total += convert_to_home(amount, currency)
+        if balance_total >= 0:
+            cash_total += balance_total
+        else:
+            liabilities_total += abs(balance_total)
+
+    def summarize_unrealized_value(rows: list[dict]) -> Decimal:
+        total_value = Decimal("0")
+        for row in rows:
+            shares = coerce_decimal(row["shares"])
+            ticker = normalize_ticker(row["stock_ticker"])
+            currency = row["stock_currency"]
+            price = price_lookup.get(ticker)
+            value_stock = Decimal("0")
+            if price is not None and price > 0:
+                value_stock = (shares * price).quantize(ESPP_MONEY_QUANT)
+            total_value += convert_to_home(value_stock, currency)
+        return quantize_money(total_value)
+
+    realized_totals = {"espp": Decimal("0"), "rsu": Decimal("0")}
+    for row in realized_rows:
+        source = row["source"]
+        if source not in realized_totals:
+            continue
+        realized_totals[source] += convert_to_home(
+            coerce_decimal(row["total_amount"]), row["currency"]
+        )
+    espp_realized = quantize_money(realized_totals["espp"])
+    rsu_realized = quantize_money(realized_totals["rsu"])
+
+    espp_unrealized = summarize_unrealized_value(vested_espp_rows)
+    rsu_unrealized = summarize_unrealized_value(vested_rsu_rows)
+
+    espp_total = quantize_money(espp_unrealized + espp_realized)
+    rsu_total = quantize_money(rsu_unrealized + rsu_realized)
+
+    other_investments_total = Decimal("0")
+    for row in other_investment_rows:
+        symbol = normalize_ticker(row["symbol"])
+        price = price_lookup.get(symbol) if symbol else None
+        total_shares = coerce_decimal(row["total_shares"] or 0)
+        cost_basis = coerce_decimal(row["total_cost_basis"] or 0)
+        value_stock = cost_basis
+        if price is not None and price > 0:
+            value_stock = (total_shares * price).quantize(ESPP_MONEY_QUANT)
+        other_investments_total += convert_to_home(value_stock, row["currency"])
+    other_investments_total = quantize_money(other_investments_total)
+
+    cash_total = quantize_money(cash_total)
+    liabilities_total = quantize_money(liabilities_total)
+    total_assets = quantize_money(cash_total + espp_total + rsu_total + other_investments_total)
+    net_worth = quantize_money(total_assets - liabilities_total)
+
+    return NetWorthResponse(
+        assets=NetWorthAssets(
+            cash=cash_total,
+            investments=NetWorthInvestments(
+                espp=espp_total,
+                rsu=rsu_total,
+                other=other_investments_total,
+            ),
+            total_assets=total_assets,
+        ),
+        liabilities=NetWorthLiabilities(total_liabilities=liabilities_total),
+        net_worth=net_worth,
     )
 
 

@@ -5,12 +5,14 @@ import EquitySummaryCard from "./components/EquitySummaryCard";
 import ExpenseLineChart from "./components/ExpenseLineChart";
 import MonthlyExpenseSummaryCard from "./components/MonthlyExpenseSummaryCard";
 import MonthlyCashflowChart from "./components/MonthlyCashflowChart";
+import NetWorthCard from "./components/NetWorthCard";
 import SpendingByCategoryLineChartCard from "./components/SpendingByCategoryLineChartCard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
 import { useCategoryBreakdown } from "../lib/useCategoryBreakdown";
 import { useEquitySummary } from "../lib/useEquitySummary";
 import { useMonthlyExpenseGroups } from "../lib/useMonthlyExpenseGroups";
 import { useMonthlyTrends } from "../lib/useMonthlyTrends";
+import { useNetWorth } from "../lib/useNetWorth";
 import { useNetFlowSummary } from "../lib/useNetFlowSummary";
 import { getConversionNote, getCurrencyFormatter } from "../lib/currency";
 
@@ -109,6 +111,11 @@ export default function DashboardClient() {
     loading: equitySummaryLoading,
     error: equitySummaryError
   } = useEquitySummary();
+  const {
+    data: netWorthSummary,
+    loading: netWorthLoading,
+    error: netWorthError
+  } = useNetWorth();
 
   const loadData = async () => {
     try {
@@ -256,6 +263,14 @@ export default function DashboardClient() {
           categoryBreakdown={expenseSummaryCategoryBreakdown}
           categoryBreakdownLoading={expenseSummaryBreakdownLoading}
           categoryBreakdownError={expenseSummaryBreakdownError}
+        />
+
+        <NetWorthCard
+          className="md:col-span-12"
+          summary={netWorthSummary}
+          loading={netWorthLoading}
+          error={netWorthError}
+          homeCurrency={homeCurrency}
         />
 
         <EquitySummaryCard
