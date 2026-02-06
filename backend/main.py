@@ -30,6 +30,11 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 
 from backend.budget_engine import BudgetRule, Transaction, evaluate_budget
+from backend.classification_engine import (
+    extract_merchant_patterns,
+    learn_from_transactions,
+    suggest_category,
+)
 from backend.csv_parser import CSVParseResult, ParsedTransaction, parse_transactions_csv
 from backend.currency_conversion import (
     CompositeRateProvider,
@@ -275,6 +280,20 @@ rsu_vesting_periods = Table(
     Column("refunded_from_taxes", Numeric(12, 2)),
     Column("investment_entry_id", Integer, ForeignKey("investment_entries.id")),
     Column("created_at", DateTime, nullable=False, server_default=func.now()),
+)
+
+transaction_classification_rules = Table(
+    "transaction_classification_rules",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
+    Column("pattern", String, nullable=False),
+    Column("pattern_type", String(20), nullable=False),
+    Column("category", String(255), nullable=False),
+    Column("match_count", Integer, nullable=False, server_default="1"),
+    Column("last_used_at", DateTime, nullable=False, server_default=func.now()),
+    Column("created_at", DateTime, nullable=False, server_default=func.now()),
+    UniqueConstraint("user_id", "pattern", "category", name="uq_classification_rules_user_pattern_category"),
 )
 
 @app.on_event("startup")
@@ -1136,6 +1155,33 @@ class TransactionImportCommitPayload(BaseModel):
 
 class TransactionImportCommitResponse(BaseModel):
     inserted_count: int
+
+
+class TransactionSuggestionRequest(BaseModel):
+    id: str
+    description: str
+
+
+class TransactionSuggestionsPayload(BaseModel):
+    transactions: list[TransactionSuggestionRequest]
+
+
+class TransactionSuggestion(BaseModel):
+    id: str
+    category: str | None = None
+    confidence: float | None = None
+
+
+class TransactionSuggestionsResponse(BaseModel):
+    suggestions: list[TransactionSuggestion]
+
+
+class LearnPatternsPayload(BaseModel):
+    transaction_ids: list[int] | None = None
+
+
+class LearnPatternsResponse(BaseModel):
+    patterns_learned: int
 
 
 def hash_password(password: str) -> str:
@@ -4699,9 +4745,81 @@ def commit_transaction_import(
         if len(account_rows) != len(resolved_account_ids):
             raise HTTPException(status_code=404, detail="Account not found.")
 
-        conn.execute(insert(transactions), insert_rows)
+        result = conn.execute(insert(transactions).returning(transactions.c.id), insert_rows)
+        inserted_ids = [row[0] for row in result]
+
+        # Learn patterns from newly imported transactions (async/non-blocking in real scenario)
+        try:
+            learn_from_transactions(
+                conn,
+                user_id,
+                transactions,
+                transaction_classification_rules,
+                transaction_ids=inserted_ids
+            )
+        except Exception:
+            # Don't fail the import if learning fails
+            pass
 
     return TransactionImportCommitResponse(inserted_count=len(insert_rows))
+
+
+@app.post("/transactions/suggest-categories", response_model=TransactionSuggestionsResponse)
+def suggest_transaction_categories(
+    payload: TransactionSuggestionsPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> TransactionSuggestionsResponse:
+    """
+    Suggest categories for transactions based on learned patterns.
+
+    Batch processes multiple transactions and returns category suggestions
+    with confidence scores.
+    """
+    user_id = get_user_id(x_user_id)
+
+    suggestions = []
+    with engine.begin() as conn:
+        for txn in payload.transactions:
+            category, confidence = suggest_category(
+                conn,
+                user_id,
+                txn.description,
+                transaction_classification_rules
+            )
+            suggestions.append(
+                TransactionSuggestion(
+                    id=txn.id,
+                    category=category,
+                    confidence=confidence
+                )
+            )
+
+    return TransactionSuggestionsResponse(suggestions=suggestions)
+
+
+@app.post("/transactions/learn-patterns", response_model=LearnPatternsResponse)
+def learn_classification_patterns(
+    payload: LearnPatternsPayload,
+    x_user_id: str | None = Header(None, alias="x-user-id"),
+) -> LearnPatternsResponse:
+    """
+    Learn classification patterns from transaction history.
+
+    If transaction_ids is provided, learns from those specific transactions.
+    If null, learns from all user transactions with categories.
+    """
+    user_id = get_user_id(x_user_id)
+
+    with engine.begin() as conn:
+        patterns_learned = learn_from_transactions(
+            conn,
+            user_id,
+            transactions,
+            transaction_classification_rules,
+            transaction_ids=payload.transaction_ids
+        )
+
+    return LearnPatternsResponse(patterns_learned=patterns_learned)
 
 
 @app.post("/transactions", response_model=TransactionResponse)

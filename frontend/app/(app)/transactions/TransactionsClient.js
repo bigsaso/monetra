@@ -1030,7 +1030,7 @@ export default function TransactionsClient() {
     }
   };
 
-  const handleCsvUpload = (event) => {
+  const handleCsvUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) {
       return;
@@ -1039,14 +1039,58 @@ export default function TransactionsClient() {
     setImportCommitError("");
     setImportSuccess("");
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const text = String(reader.result || "");
         const previewRows = buildPreviewRows(text);
         if (previewRows.length === 0) {
           throw new Error("No rows found in the CSV.");
         }
-        setImportRows(previewRows);
+
+        // Request category suggestions for all rows
+        try {
+          const suggestPayload = {
+            transactions: previewRows.map((row) => ({
+              id: row.id,
+              description: row.description
+            }))
+          };
+          const suggestResponse = await fetch("/api/transactions/suggest-categories", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(suggestPayload)
+          });
+
+          if (suggestResponse.ok) {
+            const suggestData = await suggestResponse.json();
+            const suggestionsMap = new Map(
+              suggestData.suggestions.map((s) => [s.id, s])
+            );
+
+            // Merge suggestions into preview rows
+            const rowsWithSuggestions = previewRows.map((row) => {
+              const suggestion = suggestionsMap.get(row.id);
+              if (suggestion?.category && suggestion?.confidence) {
+                return {
+                  ...row,
+                  category: row.category || suggestion.category,
+                  suggestedCategory: suggestion.category,
+                  confidence: suggestion.confidence
+                };
+              }
+              return row;
+            });
+
+            setImportRows(rowsWithSuggestions);
+          } else {
+            // If suggestions fail, just use original rows
+            setImportRows(previewRows);
+          }
+        } catch {
+          // If suggestions fail, just use original rows
+          setImportRows(previewRows);
+        }
+
         setBulkCategory("");
         setShowImportModal(true);
       } catch (err) {
@@ -1136,6 +1180,19 @@ export default function TransactionsClient() {
       setImportSuccess(
         `Imported ${data?.inserted_count || importRows.length} transactions.`
       );
+
+      // Trigger pattern learning (fire and forget, non-blocking)
+      try {
+        fetch("/api/transactions/learn-patterns", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transaction_ids: null })
+        }).catch(() => {
+          // Ignore errors in background learning
+        });
+      } catch {
+        // Ignore errors in background learning
+      }
     } catch (err) {
       setImportCommitError(err.message);
     } finally {

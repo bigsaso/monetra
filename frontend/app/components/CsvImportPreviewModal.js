@@ -152,6 +152,7 @@ export default function CsvImportPreviewModal({
             <TableBody>
               {rows.map((row, index) => {
                 const missingCategory = !row.category || !row.category.trim();
+                const hasSuggestion = row.suggestedCategory && row.confidence;
                 return (
                   <TableRow
                     key={row.id}
@@ -176,6 +177,11 @@ export default function CsvImportPreviewModal({
                           </option>
                         ))}
                       </select>
+                      {hasSuggestion ? (
+                        <div className="mt-1 text-xs text-emerald-600">
+                          ✓ Auto-suggested ({Math.round(row.confidence * 100)}% confidence)
+                        </div>
+                      ) : null}
                       {missingCategory ? (
                         <div className="mt-1 text-xs text-rose-600">
                           Category required

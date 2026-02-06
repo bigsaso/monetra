@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: monetra
       POSTGRES_DB: monetra
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,6 +20,7 @@ services:
       context: ./backend
     environment:
       DATABASE_URL: postgresql://monetra:monetra@db:5432/monetra
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
     ports:
       - "8000:8000"
     depends_on:
@@ -35,6 +36,8 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
     env_file:
       - .env
     ports:
